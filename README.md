@@ -1,8 +1,19 @@
 # SIS-234 · Equipo 8 · MQTT + MCP
 
-Estado actual: `ControlLeds`, `SensorUltrasonico` y `ConexionWifi` fueron probados físicamente juntos por el equipo. El despliegue EMQX también fue probado por el equipo con MQTT.fx. Se añade `ConexionMqtt` con MQTT 3.1.1 sobre TLS; la conexión real del ESP32 y su regresión conjunta están pendientes de prueba. Se conservan los once comandos, GPIO y mediciones programadas cada 500 ms. No se implementa MCP.
+Estado actual: la iteración 6 está terminada y probada físicamente por el equipo. El iPhone, mediante IoT MQTT Panel y EMQX Cloud, muestra la distancia en un Gauge y controla los tres LEDs de forma individual y conjunta. RF4 y RF5 están comprobados mediante pruebas funcionales. Se conservan los once comandos, GPIO y mediciones programadas cada 500 ms. MCP continúa pendiente.
 
-Contrato de la futura integración: [docs/protocolo_mqtt.md](docs/protocolo_mqtt.md). Prefijo definitivo: `sis234/equipo08/esp32-01/`.
+Contrato MQTT: [docs/protocolo_mqtt.md](docs/protocolo_mqtt.md). Prefijo definitivo: `sis234/equipo08/esp32-01/`. El estado de la integración iOS se registra en la guía siguiente; el contrato se conserva sin cambios.
+
+## Aplicación iOS · Iteración 6
+
+La [guía de configuración iOS](docs/configuracion_ios.md) documenta la conexión MQTT sobre TLS, el Dashboard `Control ESP32 - Equipo 08`, sus seis paneles y los pasos para reproducirlo en otro iPhone.
+
+| Requisito | Estado | Prueba funcional confirmada por el equipo |
+|---|---|---|
+| RF4 · Visualización gráfica del sensor | Comprobado | El Gauge muestra la distancia recibida del broker en centímetros. |
+| RF5 · Control móvil de actuadores | Comprobado | Los tres Switches encienden/apagan cada LED y los dos botones encienden/apagan los tres LEDs. |
+
+Los Switches no tienen `Subscribe Topic`: su estado visual puede quedar desactualizado tras comandos de otros clientes. El ESP32 publica los estados aplicados en `state/rojo`, `state/amarillo` y `state/verde`, bajo el prefijo acordado. La prueba específica mediante datos móviles **no fue realizada**. Estas pruebas funcionales no acreditan valores medidos de latencia, estabilidad o frecuencia de publicación.
 
 ## Montaje previsto
 
@@ -83,7 +94,7 @@ WiFi.persistent(false) evita nuevas escrituras de configuración del controlador
 
 ## Prueba de conexión y reconexión WiFi
 
-El equipo confirmó las pruebas WiFi de la versión anterior. Repetirlas como regresión de esta iteración MQTT; no se ejecutaron nuevamente durante el desarrollo:
+El equipo confirmó las pruebas WiFi de la versión anterior. Esta secuencia permite repetirlas como regresión; la validación funcional iOS no acredita por sí sola todos estos escenarios:
 
 1. Sin archivo local, compilar y probar la versión con plantilla vacía: debe informar configuración ausente una sola vez, conservar los once comandos y continuar las lecturas aproximadamente cada 500 ms.
 2. Configurar una red de 2,4 GHz con autenticación personal o abierta, compilar y cargar cuando el usuario lo decida. Abrir Serial Monitor a 115200 baudios y pulsar EN/RESET. Esperar el mensaje de conexión e IP; una IP no acredita acceso a Internet ni MQTT.
@@ -102,13 +113,13 @@ Se utiliza **256dpi/MQTT 2.5.2**, fijada exactamente en platformio.ini y compila
 
 Completar únicamente `include/ConfiguracionMqtt.h`, ya creado y excluido de Git: host `zffa4f2f.ala.us-east-1.emqxsl.com`, puerto 8883, client ID `equipo08_esp32_01`, usuario previsto `equipo08_esp32` y contraseña real en `ClaveMqtt`. La clave entregada queda vacía: así MQTT se deshabilita y el control local permanece activo. La plantilla versionable es `include/ConfiguracionMqtt.ejemplo.h`; un clon sin copia privada también compila con MQTT deshabilitado. No imprimir, versionar ni forzar la inclusión de la copia privada. Verificar con `git check-ignore -v include/ConfiguracionMqtt.h`.
 
-Se utiliza exactamente `certificados/emqxsl-ca.crt`, aunque el nombre mencionado inicialmente en la solicitud era `ca_emqx.crt`. El archivo encontrado es PEM y declara DigiCert Global Root G2, vigencia 2013-08-01 a 2038-01-15. `board_build.embed_txtfiles` incorpora su contenido original terminado en cero; `setCACert()` lo utiliza para validar TLS. No se usa setInsecure() ni se desactiva la validación. Su formato y vigencia no acreditan por sí solos la cadena presentada por el endpoint: falta probarla en el ESP32.
+Se utiliza exactamente `certificados/emqxsl-ca.crt`, aunque el nombre mencionado inicialmente en la solicitud era `ca_emqx.crt`. El archivo encontrado es PEM y declara DigiCert Global Root G2, vigencia 2013-08-01 a 2038-01-15. `board_build.embed_txtfiles` incorpora su contenido original terminado en cero; `setCACert()` lo utiliza para validar TLS. No se usa setInsecure() ni se desactiva la validación. Su formato y vigencia no acreditan por sí solos la cadena presentada por el endpoint.
 
 NTP se solicita sin bucle de espera; se consulta time() en cada vuelta durante hasta 10 s. Sin hora válida no se intenta TLS. Los fallos aplazan nuevos intentos 30 s. TCP/escrituras tienen timeout nominal de 1 s, handshake TLS de 3 s y operaciones MQTT de 1 s; estos plazos no forman un límite global de conexión. **Las llamadas síncronas de TLS/MQTT y DNS pueden pausar las mediciones y los comandos.** En el core instalado, DNS incluye esperas internas de hasta 16 s y 15 s; no se promete una cadencia estricta de 500 ms durante fallos de red. Entre intentos sigue ejecutándose el control local. No hay espera indefinida ni recuperación de lecturas atrasadas.
 
 Compilación final con clave MQTT vacía: **SUCCESS**, salida 0, 8,50 s; RAM estática 46 392 bytes (14,2 %), flash 905 685 bytes (69,1 %). También se compiló y enlazó la ruta habilitada con una clave ficticia, sin ejecutar firmware: SUCCESS, 8,64 s; flash 909 197 bytes (69,4 %). Se comprobó la incorporación de la CA completa y su hash sin cambios; después se restauró la clave vacía y se recompiló. La RAM informada no incluye el máximo de heap utilizado durante un handshake real.
 
-La guía de [pruebas con MQTT.fx y reconexión](docs/pruebas_mqtt.md) explica los pasos y las limitaciones pendientes. No se ejecutaron cargas, conexiones del ESP32 ni commits en esta iteración.
+La guía de [pruebas con MQTT.fx y reconexión](docs/pruebas_mqtt.md) explica cómo comprobar esos escenarios. Los resultados funcionales posteriores desde el iPhone se registran en la [guía iOS](docs/configuracion_ios.md). La actualización documental de la iteración 6 no modifica firmware ni ejecuta cargas o commits.
 
 ## Compilar y cargar cuando el circuito esté listo
 
@@ -124,7 +135,7 @@ La segunda orden realiza la carga y debe ejecutarla el usuario cuando haya revis
 
 Si `pio` no está en PATH, en este equipo el ejecutable está en `%USERPROFILE%\.platformio\penv\Scripts\platformio.exe`. En PowerShell puede invocarse con `& "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe"` seguido de los mismos argumentos.
 
-La compilación actual se informa en la sección MQTT anterior. El equipo confirmó físicamente las pruebas de los módulos previos; en esta iteración no se ejecutó firmware ni se verificó la red en el ESP32.
+Los resultados de compilación de la sección MQTT corresponden a esa implementación. La validación física posterior desde el iPhone fue realizada y confirmada por el equipo; esta actualización de documentación no requiere recompilar ni cargar firmware.
 
 Los archivos de ControlLeds, SensorUltrasonico y ConexionWifi permanecen intactos. No hay una suite automatizada implementada en test/; la revisión estructural y las compilaciones no sustituyen las pruebas físicas de la integración MQTT.
 
@@ -168,11 +179,12 @@ Probar `rojo:toggle`, `Rojo:on`, un comando con espacios y una línea de 32 o m�
 
 ## Límites de esta etapa
 
-- El equipo confirmó las pruebas físicas de LEDs, sensor y convivencia tras la refactorización. La regresión conjunta con WiFi sigue pendiente; no se inventan valores de exactitud ni latencia.
+- El equipo confirmó las pruebas físicas de LEDs, sensor, WiFi y la integración funcional iOS de la iteración 6. No se registran valores medidos de exactitud ni latencia.
 - Los estados mostrados son estados lógicos del programa. No detectan un LED invertido, dañado o desconectado.
 - Las escrituras sobre los tres GPIO son consecutivas, no una conmutación eléctrica simultánea y atómica.
 - Los comandos se aplican al recibir un fin de línea; no hay timeout para una línea incompleta. No se utiliza delay() ni lectura serie con espera de línea. Solo se usan delayMicroseconds(2) y delayMicroseconds(10) para TRIG, además de pulseIn() con timeout explícito de 30 ms.
 - Una medición válida solo significa pulso recibido dentro del timeout y distancia calculada dentro del rango nominal; no garantiza un eco del objeto deseado ni la exactitud de la medida. Se usa velocidad del sonido fija, sin filtrado ni compensación térmica.
 - No se admiten caracteres de control dentro del comando, incluidos retroceso y tabulación. El filtro `send_on_enter` agrupa la entrada hasta Enter, pero no elimina los bytes de retroceso: si se comete un error, enviar esa línea para descartarla y volver a escribir el comando completo.
-- La consola está pensada para pruebas manuales. Un flujo continuo de mensajes puede saturar la salida serie; se revisará la interfaz temporal antes de integrar MQTT.
-- No se han verificado todavía los atributos de estabilidad, medición, respuesta móvil, publicación o reconexión exigidos para la integración final.
+- La consola está pensada para pruebas manuales. Un flujo continuo de mensajes puede saturar la salida serie.
+- RF4 y RF5 están comprobados funcionalmente. Queda pendiente registrar valores medibles de los atributos no funcionales de estabilidad, exactitud, respuesta móvil, publicación y reconexión exigidos para la integración final.
+- Los Switches iOS pueden mostrar un estado desactualizado al no suscribirse a los estados publicados por el ESP32. La prueba específica mediante datos móviles no fue realizada.
