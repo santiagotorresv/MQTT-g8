@@ -1,6 +1,6 @@
 # SIS-234 · Equipo 8 · MQTT + MCP
 
-Estado actual: `ControlLeds` y `SensorUltrasonico` refactorizados, con las pruebas físicas y de convivencia confirmadas por el equipo. Se añade `ConexionWifi`, cuya conexión y reconexión reales están pendientes de prueba. Se conservan los once comandos, GPIO, circuito y mediciones cada 500 ms. No se implementan MQTT ni MCP ni se contacta con EMQX.
+Estado actual: `ControlLeds`, `SensorUltrasonico` y `ConexionWifi` fueron probados físicamente juntos por el equipo. El despliegue EMQX también fue probado por el equipo con MQTT.fx. Se añade `ConexionMqtt` con MQTT 3.1.1 sobre TLS; la conexión real del ESP32 y su regresión conjunta están pendientes de prueba. Se conservan los once comandos, GPIO y mediciones programadas cada 500 ms. No se implementa MCP.
 
 Contrato de la futura integración: [docs/protocolo_mqtt.md](docs/protocolo_mqtt.md). Prefijo definitivo: `sis234/equipo08/esp32-01/`.
 
@@ -37,6 +37,9 @@ GPIO5 es un pin de strapping del ESP32; antes de integrar el HC-SR04 se comproba
 - `src/main.cpp`: conserva rojo=GPIO27, amarillo=GPIO26 y verde=GPIO25; añade TRIG=GPIO5, ECHO=GPIO18 y programación con millis(), manteniendo los once comandos por Serial.
 - `include/ConexionWifi.h` y `src/ConexionWifi.cpp`: conexión en modo estación, consulta del estado y reintentos WiFi temporizados, sin tocar salidas ni mediciones.
 - `include/ConfiguracionWifi.ejemplo.h`: plantilla vacía versionable; la copia privada `include/ConfiguracionWifi.h` está excluida de Git.
+- `include/ConexionMqtt.h` y `src/ConexionMqtt.cpp`: TLS, preparación de hora, conexión, suscripción, telemetría y estados; reutiliza ControlLeds y ConexionWifi.
+- `include/ConfiguracionMqtt.ejemplo.h`: configuración MQTT pública de ejemplo. `include/ConfiguracionMqtt.h` es la copia privada ignorada, creada sin contraseña real.
+- `certificados/emqxsl-ca.crt`: CA pública aportada por el equipo, incorporada por PlatformIO sin duplicarla como encabezado.
 - `platformio.ini`: placa/framework y monitor a 115200 baudios, LF y filtro `send_on_enter` de PlatformIO para escribir una línea antes de enviarla.
 
 `ControlLeds` encapsula tres pines y tres estados booleanos privados, sin estructura de canales, arreglo ni enumeración. `iniciar()` prepara LOW y configura las salidas. `establecerRojo(bool)`, `establecerAmarillo(bool)` y `establecerVerde(bool)` actualizan salida y estado. `encenderTodos()`, `apagarTodos()` y los tres métodos `encenderSolo...()` reutilizan esos métodos; los de selección apagan primero los otros dos LEDs. `estaRojoEncendido()`, `estaAmarilloEncendido()` y `estaVerdeEncendido()` consultan los estados. `ejecutarComando()` valida los once textos exactos, sin invertir estados al repetirlos. El único puntero de la interfaz es texto de solo lectura terminado en cero: reutiliza el buffer Serial sin copias ni asignaciones dinámicas y conserva el rechazo de nullptr.
@@ -80,7 +83,7 @@ WiFi.persistent(false) evita nuevas escrituras de configuración del controlador
 
 ## Prueba de conexión y reconexión WiFi
 
-Estas son pruebas pendientes para el ESP32; no son resultados obtenidos durante el desarrollo:
+El equipo confirmó las pruebas WiFi de la versión anterior. Repetirlas como regresión de esta iteración MQTT; no se ejecutaron nuevamente durante el desarrollo:
 
 1. Sin archivo local, compilar y probar la versión con plantilla vacía: debe informar configuración ausente una sola vez, conservar los once comandos y continuar las lecturas aproximadamente cada 500 ms.
 2. Configurar una red de 2,4 GHz con autenticación personal o abierta, compilar y cargar cuando el usuario lo decida. Abrir Serial Monitor a 115200 baudios y pulsar EN/RESET. Esperar el mensaje de conexión e IP; una IP no acredita acceso a Internet ni MQTT.
@@ -90,6 +93,22 @@ Estas son pruebas pendientes para el ESP32; no son resultados obtenidos durante 
 6. Arrancar con el punto de acceso apagado y habilitarlo después. También probar una contraseña incorrecta en la copia local. En ambos casos el control local debe permanecer operativo; restaurar después la clave correcta y recompilar.
 
 Quedan pendientes la estabilidad y latencia reales durante inicialización/reintentos, el comportamiento de DHCP, alcance y alimentación con la radio activa. No se implementan portales cautivos ni autenticación empresarial; una red universitaria que los requiera necesita otra configuración. El timeout de pulseIn() sigue siendo 30 ms y no se modifica la lógica del sensor. La documentación oficial de referencia es la [API WiFi de Arduino-ESP32](https://docs.espressif.com/projects/arduino-esp32/en/latest/api/wifi.html); también se revisó el código de la versión 2.0.17 instalada.
+
+## Integración MQTT sobre TLS
+
+Se utiliza **256dpi/MQTT 2.5.2**, fijada exactamente en platformio.ini y compilada con Espressif32 7.0.1 / Arduino-ESP32 2.0.17. WiFiClientSecure pertenece al framework, sin otra biblioteca externa. El contrato de tópicos y los once comandos se conserva en [protocolo_mqtt.md](docs/protocolo_mqtt.md).
+
+`ConexionMqtt::iniciar()` configura CA, LWT y callback; `actualizar()` atiende mensajes y prepara/reintenta la conexión cuando hay WiFi. `publicarMedicion()` envía solo la lectura actual, y `solicitarPublicacionEstados()` marca estados pendientes sin publicar desde el callback ni desde el procesador Serial. `estaConectada()` consulta si la sesión terminó de inicializarse. Los módulos anteriores no se modifican.
+
+Completar únicamente `include/ConfiguracionMqtt.h`, ya creado y excluido de Git: host `zffa4f2f.ala.us-east-1.emqxsl.com`, puerto 8883, client ID `equipo08_esp32_01`, usuario previsto `equipo08_esp32` y contraseña real en `ClaveMqtt`. La clave entregada queda vacía: así MQTT se deshabilita y el control local permanece activo. La plantilla versionable es `include/ConfiguracionMqtt.ejemplo.h`; un clon sin copia privada también compila con MQTT deshabilitado. No imprimir, versionar ni forzar la inclusión de la copia privada. Verificar con `git check-ignore -v include/ConfiguracionMqtt.h`.
+
+Se utiliza exactamente `certificados/emqxsl-ca.crt`, aunque el nombre mencionado inicialmente en la solicitud era `ca_emqx.crt`. El archivo encontrado es PEM y declara DigiCert Global Root G2, vigencia 2013-08-01 a 2038-01-15. `board_build.embed_txtfiles` incorpora su contenido original terminado en cero; `setCACert()` lo utiliza para validar TLS. No se usa setInsecure() ni se desactiva la validación. Su formato y vigencia no acreditan por sí solos la cadena presentada por el endpoint: falta probarla en el ESP32.
+
+NTP se solicita sin bucle de espera; se consulta time() en cada vuelta durante hasta 10 s. Sin hora válida no se intenta TLS. Los fallos aplazan nuevos intentos 30 s. TCP/escrituras tienen timeout nominal de 1 s, handshake TLS de 3 s y operaciones MQTT de 1 s; estos plazos no forman un límite global de conexión. **Las llamadas síncronas de TLS/MQTT y DNS pueden pausar las mediciones y los comandos.** En el core instalado, DNS incluye esperas internas de hasta 16 s y 15 s; no se promete una cadencia estricta de 500 ms durante fallos de red. Entre intentos sigue ejecutándose el control local. No hay espera indefinida ni recuperación de lecturas atrasadas.
+
+Compilación final con clave MQTT vacía: **SUCCESS**, salida 0, 8,50 s; RAM estática 46 392 bytes (14,2 %), flash 905 685 bytes (69,1 %). También se compiló y enlazó la ruta habilitada con una clave ficticia, sin ejecutar firmware: SUCCESS, 8,64 s; flash 909 197 bytes (69,4 %). Se comprobó la incorporación de la CA completa y su hash sin cambios; después se restauró la clave vacía y se recompiló. La RAM informada no incluye el máximo de heap utilizado durante un handshake real.
+
+La guía de [pruebas con MQTT.fx y reconexión](docs/pruebas_mqtt.md) explica los pasos y las limitaciones pendientes. No se ejecutaron cargas, conexiones del ESP32 ni commits en esta iteración.
 
 ## Compilar y cargar cuando el circuito esté listo
 
@@ -105,9 +124,9 @@ La segunda orden realiza la carga y debe ejecutarla el usuario cuando haya revis
 
 Si `pio` no está en PATH, en este equipo el ejecutable está en `%USERPROFILE%\.platformio\penv\Scripts\platformio.exe`. En PowerShell puede invocarse con `& "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe"` seguido de los mismos argumentos.
 
-Compilación de la iteración WiFi el 27 de octubre de 2026, sin archivo privado y usando la plantilla vacía: `SUCCESS` (salida 0), 50,97 s. Espressif32 7.0.1, Arduino-ESP32 2.0.17 y WiFi 2.0.0 incluido en el framework. RAM: 43 472 / 327 680 bytes (13,3 %); flash: 728 981 / 1 310 720 bytes (55,6 %). No se instalaron bibliotecas externas ni se ejecutó firmware. La conexión, reconexión y regresión conjunta con WiFi están pendientes de prueba física.
+La compilación actual se informa en la sección MQTT anterior. El equipo confirmó físicamente las pruebas de los módulos previos; en esta iteración no se ejecutó firmware ni se verificó la red en el ESP32.
 
-La refactorización conserva los once comandos y las reglas de medición. No hay pruebas automatizadas implementadas en test/; solo existe el README de PlatformIO. La revisión lógica y la compilación no sustituyen repetir las pruebas físicas de esta versión.
+Los archivos de ControlLeds, SensorUltrasonico y ConexionWifi permanecen intactos. No hay una suite automatizada implementada en test/; la revisión estructural y las compilaciones no sustituyen las pruebas físicas de la integración MQTT.
 
 ## Prueba física del sensor desde PlatformIO
 
@@ -117,7 +136,7 @@ La refactorización conserva los once comandos y las reglas de medición. No hay
 4. Usar un objeto plano frente al sensor y una cinta métrica para comparar, por ejemplo, 10, 30 y 100 cm desde la cara de los transductores. Registrar lectura, referencia y error; todavía no se declara exactitud física ni se aplica calibración.
 5. Retirar o desviar el objeto para buscar ausencia de eco y verificar la respuesta inválida cuando no se complete un pulso a tiempo. Otros objetos pueden seguir reflejando el sonido: retirar un objetivo no garantiza por sí solo un timeout. Una lectura fuera del rango aceptado también se informa como inválida.
 6. Mientras aparecen lecturas, enviar los once comandos de la tabla siguiente y comprobar su respuesta. Repetir `todos:on`, `solo:rojo`, `solo:amarillo`, `solo:verde` y `todos:off`; mover el objeto sin enviar comandos y verificar que los LEDs no cambien por la distancia.
-7. Observar la cadencia aproximada de dos intentos de medición por segundo y la continuidad de los comandos, también cuando se informa invalidez. Registrar reinicios, bloqueos, errores y latencia perceptible. La publicación MQTT y los demás requisitos de red todavía no se evalúan.
+7. Observar la cadencia aproximada de dos intentos de medición por segundo y la continuidad de los comandos, también cuando se informa invalidez. Registrar reinicios, bloqueos, errores y latencia perceptible. Esta secuencia comprueba el sensor; completar después las pruebas MQTT de la guía enlazada.
 
 ## Prueba manual por Serial
 

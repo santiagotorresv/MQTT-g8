@@ -1,8 +1,8 @@
 # Contrato MQTT de la práctica SIS-234
 
-Fecha: 27 de octubre de 2026. Versión documental: 7.
+Fecha: 27 de octubre de 2026. Versión documental: 8.
 
-Este documento formaliza el contrato acordado a partir de la [consigna oficial](Práctica_MQTT.md). Describe el comportamiento de la futura integración MQTT; no acredita que la aplicación móvil, EMQX o MCP ya funcionen. La implementación actual integra ControlLeds, SensorUltrasonico y ConexionWifi. El equipo confirmó físicamente los once comandos, el sensor y su convivencia después de la refactorización. La nueva conexión/reconexión WiFi está pendiente de prueba física; no se conecta a EMQX ni publica MQTT. Los módulos ya probados se conservan sin cambios. La verificación de la plantilla original se conserva en la sección 9 y la compilación actual en el README.
+Este documento formaliza el contrato acordado a partir de la [consigna oficial](Práctica_MQTT.md). El equipo confirmó físicamente ControlLeds, SensorUltrasonico y ConexionWifi juntos, además de publicación/suscripción del despliegue con MQTT.fx. Esta iteración añade ConexionMqtt con TLS al ESP32; su conexión, publicaciones y reconexión físicas están pendientes. No se implementan todavía la aplicación móvil ni MCP. Las tablas de tópicos y mensajes aprobados se conservan sin cambios. Véanse las [pruebas pendientes](pruebas_mqtt.md) y el README para configuración y compilación.
 
 ## 1. Alcance y decisiones aprobadas
 
@@ -14,7 +14,7 @@ Este documento formaliza el contrato acordado a partir de la [consigna oficial](
 - Toda comunicación con el ESP32 pasa por el broker. El móvil y Python son clientes MQTT independientes.
 - Los LEDs responden exclusivamente a comandos explícitos. No hay automatismos por distancia ni comandos toggle.
 
-La conexión real con el broker, la versión concreta del cliente MQTT de C++, la compatibilidad efectiva de iOS y el funcionamiento con Claude Desktop Free quedan pendientes de prueba. No se instalan dependencias en esta etapa.
+El cliente MQTT de C++ es 256dpi/MQTT 2.5.2, fijado en platformio.ini y compilado con Arduino-ESP32 2.0.17. Quedan pendientes su conexión física al broker, la integración iOS y Claude Desktop Free.
 
 ## 2. Transporte, identidad y acceso
 
@@ -22,7 +22,7 @@ Se adopta MQTT 3.1.1 como base de interoperabilidad. Cada cliente utilizará un 
 
 El host será el dominio exacto del despliegue EMQX, con SNI y puerto MQTT/TLS 8883. Se utilizará una CA de confianza correspondiente al despliegue, con reloj válido en el ESP32. No se aceptará desactivar la verificación TLS ni sustituir el dominio por una IP fija. Estas condiciones están documentadas en la [guía de EMQX Serverless](https://docs.emqx.com/en/cloud/latest/deployments/port_guide_serverless.html).
 
-Las credenciales se suministrarán mediante configuración local excluida del repositorio y una plantilla sin valores reales, según la consigna. Para WiFi se proporciona include/ConfiguracionWifi.ejemplo.h y se excluye include/ConfiguracionWifi.h mediante .gitignore. La copia local se crea y completa manualmente; sin ella se compila con la plantilla vacía y el control local permanece operativo. Este documento no contiene credenciales.
+Las credenciales se suministrarán mediante configuración local excluida del repositorio y una plantilla sin valores reales, según la consigna. Para WiFi se proporciona include/ConfiguracionWifi.ejemplo.h y se excluye include/ConfiguracionWifi.h mediante .gitignore. La copia local se crea y completa manualmente; sin ella se compila con la plantilla vacía y el control local permanece operativo. Para MQTT se agrega include/ConfiguracionMqtt.ejemplo.h y una copia privada include/ConfiguracionMqtt.h ignorada por Git, con clave vacía hasta que el equipo la complete. Este documento no contiene contraseñas.
 
 Permisos previstos: el ESP32 publica telemetría, estados y disponibilidad, y se suscribe a comandos; móvil y Python publican comandos y se suscriben a la información del ESP32. La configuración efectiva de autorización debe verificarse en EMQX. El límite de gasto deberá mantenerse en 0 para usar exclusivamente la cuota gratuita.
 
@@ -80,7 +80,7 @@ Un estado publicado describe la salida GPIO aplicada por el firmware. No hay sen
 
 ## 6. Medición, publicación y frescura
 
-En la iteración local actual, SensorUltrasonico usa TRIG=GPIO5 y ECHO=GPIO18, pulso de 10 µs y timeout explícito de 30 000 µs. main programa un intento de medición cada 500 ms con millis(). El cálculo es duración en µs × 0,034 / 2, con rango nominal de aceptación de 2–400 cm. Un timeout o resultado fuera de rango devuelve valida=false y distanciaCm=NaN internamente; Serial informa invalidez sin imprimir una distancia. Esta representación interna no cambia el contrato MQTT: NaN nunca se publicará como payload. No se implementan todavía publicaciones. Detalles y prueba física en [README](../README.md).
+En la iteración local actual, SensorUltrasonico usa TRIG=GPIO5 y ECHO=GPIO18, pulso de 10 µs y timeout explícito de 30 000 µs. main programa un intento de medición cada 500 ms con millis(). El cálculo es duración en µs × 0,034 / 2, con rango nominal de aceptación de 2–400 cm. Un timeout o resultado fuera de rango devuelve valida=false y distanciaCm=NaN internamente; Serial informa invalidez sin imprimir una distancia. Esta representación interna no cambia el contrato MQTT: NaN nunca se publicará como payload. ConexionMqtt publica el estado del sensor y solo una distancia válida actual cuando la sesión está lista; no almacena lecturas para reenviarlas. Detalles y prueba física en [README](../README.md).
 
 Con una medición válida se publicará la distancia en centímetros y el estado `valid`. La representación utilizará punto decimal y una cifra decimal; esto es resolución de presentación, no una promesa de exactitud. Solo se aceptarán valores finitos, no negativos y dentro del rango de trabajo que se declare para el sensor real. No se usarán unidades dentro del payload, coma decimal, NaN, infinito ni valores centinela.
 
@@ -164,7 +164,7 @@ Antes del montaje se necesita:
 
 El identificador del grupo ya está definido: equipo08. Antes de las integraciones de red se necesita WiFi de 2,4 GHz utilizable sin portal cautivo, host/CA del despliegue, autenticación y autorización configuradas localmente, acceso a DNS/NTP y puerto 8883, cuotas verificadas y client IDs únicos. No se deben copiar contraseñas al repositorio ni a este documento.
 
-También quedan pendientes: elegir y fijar la biblioteca MQTT de C++ con soporte de los QoS acordados; probar handshake TLS/SNI; verificar QoS, retained, gráfico y caducidad en iOS; comprobar Python/SDK MCP v2/Paho y descubrimiento de herramientas en Claude Desktop Free; medir recuperación ante cortes y ajustar los tiempos acotados de conexión, keepalive y frescura.
+La biblioteca MQTT de C++ ya está fijada y compila con los QoS acordados. Quedan pendientes: probar handshake TLS/SNI; verificar QoS, retained, gráfico y caducidad en iOS; comprobar Python/SDK MCP v2/Paho y descubrimiento de herramientas en Claude Desktop Free; medir recuperación ante cortes y ajustar los tiempos acotados de conexión, keepalive y frescura.
 
 ## 11. Criterios para la integración posterior
 

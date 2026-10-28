@@ -3,6 +3,7 @@
 #include "ControlLeds.h"
 #include "SensorUltrasonico.h"
 #include "ConexionWifi.h"
+#include "ConexionMqtt.h"
 
 #if __has_include("ConfiguracionWifi.h")
 #include "ConfiguracionWifi.h"
@@ -17,6 +18,7 @@ namespace {
 ControlLeds leds(27, 26, 25);
 SensorUltrasonico sensor(5, 18);  // TRIG, ECHO mediante el divisor existente.
 ConexionWifi conexionWifi(NombreRedWifi, ClaveRedWifi);
+ConexionMqtt conexionMqtt(conexionWifi, leds);
 constexpr unsigned long IntervaloMedicionMs = 500UL;
 
 void mostrarEstados() {
@@ -38,6 +40,7 @@ void procesarLinea(const char* comando, bool lineaInvalida) {
         Serial.println(F("ERROR: comando no valido. No se modificaron los LEDs."));
     } else {
         Serial.println(F("OK: comando aplicado."));
+        conexionMqtt.solicitarPublicacionEstados();
     }
 
     mostrarEstados();
@@ -56,6 +59,7 @@ void setup() {
     Serial.println(F("Sensor: lectura cada 500 ms; timeout ECHO de 30 ms."));
     mostrarEstados();
     conexionWifi.iniciar();
+    conexionMqtt.iniciar();
 }
 
 void loop() {
@@ -113,7 +117,9 @@ void loop() {
         } else {
             Serial.println(F("Sensor: medicion invalida (sin eco/timeout o fuera de 2-400 cm)."));
         }
+        conexionMqtt.publicarMedicion(medicion);
     }
 
     conexionWifi.actualizar();
+    conexionMqtt.actualizar();
 }

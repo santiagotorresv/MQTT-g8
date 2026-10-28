@@ -37,6 +37,7 @@ htmlcov/
 
 # Credenciales y configuracion privada: versionar solo plantillas sin secretos
 /include/ConfiguracionWifi.h
+/include/ConfiguracionMqtt.h
 .env
 .env.*
 !.env.example
