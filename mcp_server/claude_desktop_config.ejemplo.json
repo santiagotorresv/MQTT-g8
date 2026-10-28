@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "equipo08": {
+      "command": "C:\\Users\\santi\\OneDrive\\Documentos\\PlatformIO\\Projects\\MQTT\\mcp_server\\.venv\\Scripts\\python.exe",
+      "args": [
+        "C:\\Users\\santi\\OneDrive\\Documentos\\PlatformIO\\Projects\\MQTT\\mcp_server\\servidor.py"
+      ]
+    }
+  }
+}

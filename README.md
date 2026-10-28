@@ -15,6 +15,12 @@ La [guía de configuración iOS](docs/configuracion_ios.md) documenta la conexi�
 
 Los Switches no tienen `Subscribe Topic`: su estado visual puede quedar desactualizado tras comandos de otros clientes. El ESP32 publica los estados aplicados en `state/rojo`, `state/amarillo` y `state/verde`, bajo el prefijo acordado. La prueba específica mediante datos móviles **no fue realizada**. Estas pruebas funcionales no acreditan valores medidos de latencia, estabilidad o frecuencia de publicación.
 
+## Servidor MCP local · Primera subiteración
+
+Se añade un servidor Python con el SDK oficial MCP 2.3.0 y transporte `stdio`. Expone únicamente `verificar_conexion()`, que devuelve `Servidor MCP del equipo 08 disponible`. La [guía del servidor MCP](mcp_server/README.md) explica el entorno virtual, las pruebas automatizadas y la configuración de ejemplo para Claude Desktop en Windows.
+
+El descubrimiento y la ejecución en Claude Desktop Free quedan pendientes de comprobación manual. RF6 completo sigue pendiente; esta subiteración no conecta Python a MQTT ni controla el ESP32.
+
 ## Montaje previsto
 
 Placa: DOIT ESP32 DEVKIT V1. Cada conexión es GPIO → resistencia de 220 Ω → ánodo del LED; todos los cátodos van a GND. El encendido utiliza HIGH. Montar con la alimentación desconectada.
