@@ -36,6 +36,7 @@ coverage.xml
 htmlcov/
 
 # Credenciales y configuracion privada: versionar solo plantillas sin secretos
+/include/ConfiguracionWifi.h
 .env
 .env.*
 !.env.example

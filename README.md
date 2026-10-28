@@ -1,6 +1,6 @@
 # SIS-234 · Equipo 8 · MQTT + MCP
 
-Estado actual: control local de tres LEDs con `LedBank` y una interfaz temporal por Serial. No se implementan todavía WiFi, MQTT, sensor ultrasónico ni MCP. El equipo confirmó mediante pruebas físicas el control de los tres LEDs y `todos:off`. Se añade `todos:on`, cuya prueba física permanece pendiente; no se ha cargado el firmware durante esta modificación.
+Estado actual: `ControlLeds` y `SensorUltrasonico` refactorizados, con las pruebas físicas y de convivencia confirmadas por el equipo. Se añade `ConexionWifi`, cuya conexión y reconexión reales están pendientes de prueba. Se conservan los once comandos, GPIO, circuito y mediciones cada 500 ms. No se implementan MQTT ni MCP ni se contacta con EMQX.
 
 Contrato de la futura integración: [docs/protocolo_mqtt.md](docs/protocolo_mqtt.md). Prefijo definitivo: `sis234/equipo08/esp32-01/`.
 
@@ -14,9 +14,16 @@ Placa: DOIT ESP32 DEVKIT V1. Cada conexión es GPIO → resistencia de 220 Ω �
 | Amarillo | 26 | 220 Ω |
 | Verde | 25 | 220 Ω |
 
-Comprobar polaridad, correspondencia entre etiquetas GPIO y cabeceras, resistencias y masa común. El sensor no se conecta en esta etapa. El software apaga los LEDs al ejecutar `begin()`; no controla los niveles eléctricos anteriores a la inicialización del firmware.
+Se conserva el circuito anterior, sin modificar GPIO ni resistencias. El software apaga los LEDs al ejecutar `ControlLeds::iniciar()`; no controla los niveles eléctricos anteriores a la inicialización del firmware.
 
-La asignación definitiva reservada para el HC-SR04 es TRIG en GPIO5 y ECHO en GPIO18 mediante divisor resistivo. Estos pines solo se documentan: el firmware actual no los configura ni implementa lectura del sensor.
+| HC-SR04 | Conexión existente |
+|---|---|
+| VCC | 5 V |
+| GND | GND común con el ESP32 |
+| TRIG | GPIO5 |
+| ECHO | GPIO18 a través del divisor anterior de tres resistencias de 2,2 kΩ |
+
+El firmware configura TRIG como salida inicialmente LOW y ECHO como entrada. No cambia el circuito del divisor ni implementa ningún automatismo de LEDs por distancia.
 
 En el circuito anterior se utilizaron tres resistencias de 2,2 kΩ para el divisor de ECHO. Se registra como **circuito anterior sujeto a verificación eléctrica**: los valores por sí solos no permiten confirmar la relación de división. Antes de conectarlo al ESP32 se debe revisar el esquema real, la disposición de las tres resistencias, el punto de toma hacia GPIO18, la masa común y el nivel de tensión resultante. No conectar ECHO directamente a GPIO18 ni dar por validado el divisor sin esa revisión.
 
@@ -24,12 +31,65 @@ GPIO5 es un pin de strapping del ESP32; antes de integrar el HC-SR04 se comproba
 
 ## Organización del código
 
-- `include/LedBank.h`: interfaz de la clase y enumeración de LEDs.
-- `src/LedBank.cpp`: salidas activas en HIGH, estados lógicos y validación exacta de los once comandos.
-- `src/main.cpp`: instancia en el orden del constructor rojo=GPIO27, amarillo=GPIO26 y verde=GPIO25; inicialización y recepción de líneas por Serial.
+- `include/ControlLeds.h`: interfaz pública, pines privados y estados explícitos de rojo, amarillo y verde.
+- `src/ControlLeds.cpp`: salidas activas en HIGH, estados lógicos y validación exacta de los once comandos.
+- `include/SensorUltrasonico.h` y `src/SensorUltrasonico.cpp`: inicialización, activación y medición del HC-SR04 con distancia y validez separadas.
+- `src/main.cpp`: conserva rojo=GPIO27, amarillo=GPIO26 y verde=GPIO25; añade TRIG=GPIO5, ECHO=GPIO18 y programación con millis(), manteniendo los once comandos por Serial.
+- `include/ConexionWifi.h` y `src/ConexionWifi.cpp`: conexión en modo estación, consulta del estado y reintentos WiFi temporizados, sin tocar salidas ni mediciones.
+- `include/ConfiguracionWifi.ejemplo.h`: plantilla vacía versionable; la copia privada `include/ConfiguracionWifi.h` está excluida de Git.
 - `platformio.ini`: placa/framework y monitor a 115200 baudios, LF y filtro `send_on_enter` de PlatformIO para escribir una línea antes de enviarla.
 
-`begin()` configura las salidas apagadas; `set()` controla un LED, `allOn()` enciende los tres, `allOff()` los apaga y `only()` apaga los demás antes de encender el seleccionado. `isOn()` consulta el estado lógico guardado y `executeCommand()` devuelve si una orden fue válida. `allOn()` fija HIGH y el estado lógico en true para cada LED, de modo que repetirlo mantiene los tres encendidos. La clase no depende de Serial ni realiza asignaciones dinámicas de memoria. Se debe llamar a `begin()` antes de controlar los LEDs.
+`ControlLeds` encapsula tres pines y tres estados booleanos privados, sin estructura de canales, arreglo ni enumeración. `iniciar()` prepara LOW y configura las salidas. `establecerRojo(bool)`, `establecerAmarillo(bool)` y `establecerVerde(bool)` actualizan salida y estado. `encenderTodos()`, `apagarTodos()` y los tres métodos `encenderSolo...()` reutilizan esos métodos; los de selección apagan primero los otros dos LEDs. `estaRojoEncendido()`, `estaAmarilloEncendido()` y `estaVerdeEncendido()` consultan los estados. `ejecutarComando()` valida los once textos exactos, sin invertir estados al repetirlos. El único puntero de la interfaz es texto de solo lectura terminado en cero: reutiliza el buffer Serial sin copias ni asignaciones dinámicas y conserva el rechazo de nullptr.
+
+## Módulo SensorUltrasonico
+
+- `SensorUltrasonico(pinTrig, pinEcho)`: guarda los dos GPIO sin acceder al hardware. En main se instancia con `(5, 18)`.
+- `iniciar()`: prepara TRIG en LOW, lo configura como salida y configura ECHO como entrada.
+- `medir()`: mantiene TRIG bajo durante 2 µs, genera un pulso HIGH de 10 µs, vuelve a LOW y mide ECHO con `pulseIn(pinEcho, HIGH, 30000UL)`. Devuelve un `Medicion` con `distanciaCm` y `valida`.
+
+El cálculo es `distancia_cm = duración_ECHO_µs × 0,034 / 2`. Se usa una velocidad del sonido aproximada de 340 m/s, expresada como 0,034 cm/µs, y se divide entre dos por el trayecto de ida y vuelta. El rango nominal aceptado por software es de 2 a 400 cm; no constituye un rango ni una exactitud verificados para nuestro módulo. El pulso, rango y cálculo se basan en la [ficha HC-SR04 de ELECFREAKS alojada por SparkFun](https://cdn.sparkfun.com/datasheets/Sensors/Proximity/HCSR04.pdf).
+
+Si `pulseIn()` devuelve cero, no se recibió un pulso completo dentro del timeout. También se rechazan distancias calculadas fuera de 2–400 cm. En ambos casos el resultado es `valida=false` y `distanciaCm=NaN`: se debe comprobar valida antes de usar la distancia. Serial muestra una medición inválida sin imprimir NaN ni sustituirla por 0 cm o por una lectura anterior. No hay filtros, promedios ni compensación por temperatura. Véase [pulseIn() en Arduino](https://docs.arduino.cc/language-reference/en/functions/advanced-io/pulseIn/).
+
+Cada vuelta de loop procesa hasta 32 bytes pendientes de Serial y después comprueba si transcurrieron 500 ms desde el inicio de la última lectura. La resta sin signo de millis() tolera su desbordamiento. El timestamp se guarda antes de medir para evitar añadir la duración del eco al intervalo; si hay retrasos, no se lanzan ráfagas para recuperar mediciones atrasadas. Los 500 ms también respetan el intervalo de más de 60 ms indicado en la ficha.
+
+`pulseIn()` es bloqueante, con presupuesto nominal de 30 ms en el Arduino-ESP32 instalado, más el pulso de activación y la sobrecarga de ejecución. Durante ese breve periodo los bytes Serial se reciben en el buffer del framework y se procesan al volver al bucle. No se espera 500 ms con delay() ni se deshabilitan interrupciones. No es una implementación completamente asíncrona ni se garantiza latencia estricta con tráfico continuo. El sensor nunca modifica los LEDs.
+
+## Conexión WiFi y credenciales locales
+
+La implementación utiliza únicamente `WiFi.h` del Arduino-ESP32 instalado. Los métodos públicos de `ConexionWifi` son:
+
+- `iniciar()`: valida la configuración y lanza un intento sin esperar a obtener conexión. Se llama una vez desde setup(), después de inicializar Serial y los periféricos.
+- `actualizar()`: se llama en cada vuelta de loop(). Detecta los cambios observados de conexión, muestra la IP al conectar y programa los intentos siguientes.
+- `estaConectada()`: consulta si el framework indica `WL_CONNECTED`. No comprueba acceso a Internet ni al broker.
+
+Los intentos comienzan al iniciar y, si sigue sin conexión, cada 15 000 ms mediante una resta sin signo de millis(). Al detectar la pérdida de una conexión establecida, el contador se reinicia y se espera 15 s antes del siguiente intento. Cada intento cancela el anterior y vuelve a llamar a WiFi.begin(). Se desactiva la reconexión automática continua del framework para que la clase supervise el intervalo; el controlador puede realizar su propio reintento inicial interno. No se añade while de espera, delay(), escaneo síncrono ni waitForConnectResult(). Las llamadas del controlador tienen sobrecarga, por lo que no se declara latencia estricta sin medirla en hardware.
+
+Solo se informa del inicio, de cada reintento espaciado, de errores al iniciar un intento y de los cambios de conexión observados. Una conexión estable no genera mensajes WiFi en cada vuelta. Los mensajes propios no muestran SSID, contraseña ni dirección MAC; sí muestran la IP local solicitada. La supervisión por consulta puede no registrar una desconexión muy breve ocurrida entre dos vueltas de loop().
+
+Para configurar la red:
+
+1. Copiar manualmente `include/ConfiguracionWifi.ejemplo.h` como `include/ConfiguracionWifi.h`, si la copia local aún no existe.
+2. Editar únicamente la copia local: completar `NombreRedWifi` con el nombre de la red de 2,4 GHz y `ClaveRedWifi` con su contraseña. Mantener nombres, tipos y comillas de las constantes. La clave solo puede estar vacía para una red abierta, cuya autenticación se permite expresamente en ese caso.
+3. Verificar la exclusión ejecutando `git check-ignore -v include/ConfiguracionWifi.h`. No añadir esa copia a Git mediante opciones de forzado.
+4. Compilar y, cuando se vaya a probar en la placa, ejecutar personalmente Upload. Cambiar el archivo local requiere recompilar y cargar de nuevo.
+
+No se crea automáticamente la copia local ni se incluyen credenciales reales. Si no existe, main incluye la plantilla vacía: compila, informa una sola vez que falta configuración y deja WiFi deshabilitado. LEDs, sensor y comandos siguen funcionando. Una configuración con nombre vacío, SSID de más de 32 bytes, clave de más de 64 bytes o punteros nulos también se rechaza sin imprimir sus valores. La autenticación restante la resuelve el framework; una clave incorrecta puede provocar reintentos sin conexión.
+
+WiFi.persistent(false) evita nuevas escrituras de configuración del controlador en NVS. No borra configuraciones anteriores ni cifra las credenciales: al compilar una copia local real, estas quedan incorporadas al firmware. Los archivos de compilación están ignorados en .pio/.
+
+## Prueba de conexión y reconexión WiFi
+
+Estas son pruebas pendientes para el ESP32; no son resultados obtenidos durante el desarrollo:
+
+1. Sin archivo local, compilar y probar la versión con plantilla vacía: debe informar configuración ausente una sola vez, conservar los once comandos y continuar las lecturas aproximadamente cada 500 ms.
+2. Configurar una red de 2,4 GHz con autenticación personal o abierta, compilar y cargar cuando el usuario lo decida. Abrir Serial Monitor a 115200 baudios y pulsar EN/RESET. Esperar el mensaje de conexión e IP; una IP no acredita acceso a Internet ni MQTT.
+3. Mantener conexión estable y comprobar que no se repite el mensaje de IP constantemente. Ejecutar los once comandos y observar las mediciones mientras está conectada.
+4. Apagar el punto de acceso o su radio WiFi. Tras la detección de pérdida, deben aparecer un aviso y reintentos espaciados unos 15 s. Continuar usando LEDs y sensor, sin reiniciar la placa.
+5. Volver a habilitar el mismo punto de acceso con las mismas credenciales. Esperar un nuevo intento y la asignación DHCP: debe volver a informar conexión e IP. El tiempo total incluye detección del corte, intervalo de reintento, asociación y DHCP; no se promete recuperación en 15 s exactos.
+6. Arrancar con el punto de acceso apagado y habilitarlo después. También probar una contraseña incorrecta en la copia local. En ambos casos el control local debe permanecer operativo; restaurar después la clave correcta y recompilar.
+
+Quedan pendientes la estabilidad y latencia reales durante inicialización/reintentos, el comportamiento de DHCP, alcance y alimentación con la radio activa. No se implementan portales cautivos ni autenticación empresarial; una red universitaria que los requiera necesita otra configuración. El timeout de pulseIn() sigue siendo 30 ms y no se modifica la lógica del sensor. La documentación oficial de referencia es la [API WiFi de Arduino-ESP32](https://docs.espressif.com/projects/arduino-esp32/en/latest/api/wifi.html); también se revisó el código de la versión 2.0.17 instalada.
 
 ## Compilar y cargar cuando el circuito esté listo
 
@@ -45,15 +105,25 @@ La segunda orden realiza la carga y debe ejecutarla el usuario cuando haya revis
 
 Si `pio` no está en PATH, en este equipo el ejecutable está en `%USERPROFILE%\.platformio\penv\Scripts\platformio.exe`. En PowerShell puede invocarse con `& "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe"` seguido de los mismos argumentos.
 
-Compilación verificada con `todos:on` el 24 de octubre de 2026: `SUCCESS` (salida 0), 14,69 s, con Espressif32 7.0.1 y Arduino-ESP32 2.0.17. RAM: 21 512 / 327 680 bytes (6,6 %); flash de aplicación: 270 793 / 1 310 720 bytes (20,7 %). No se instalaron bibliotecas ni se cargó firmware durante esta modificación; la prueba física del nuevo comando está pendiente.
+Compilación de la iteración WiFi el 27 de octubre de 2026, sin archivo privado y usando la plantilla vacía: `SUCCESS` (salida 0), 50,97 s. Espressif32 7.0.1, Arduino-ESP32 2.0.17 y WiFi 2.0.0 incluido en el framework. RAM: 43 472 / 327 680 bytes (13,3 %); flash: 728 981 / 1 310 720 bytes (55,6 %). No se instalaron bibliotecas externas ni se ejecutó firmware. La conexión, reconexión y regresión conjunta con WiFi están pendientes de prueba física.
 
-La revisión del código confirma que `begin()` prepara LOW y configura como salida cada GPIO; `only()` apaga los otros dos LEDs antes de encender el seleccionado. Los diez comandos anteriores conservan su implementación y se añade `todos:on` como undécimo comando. Esta es una verificación estática del programa, distinta de las pruebas físicas comunicadas por el equipo.
+La refactorización conserva los once comandos y las reglas de medición. No hay pruebas automatizadas implementadas en test/; solo existe el README de PlatformIO. La revisión lógica y la compilación no sustituyen repetir las pruebas físicas de esta versión.
+
+## Prueba física del sensor desde PlatformIO
+
+1. Con la alimentación desconectada, revisar el montaje existente: HC-SR04 a 5 V, masa común, TRIG en GPIO5 y ECHO en GPIO18 después del divisor. Verificar el esquema y nivel eléctrico del divisor previo; no se cambia su disposición desde el firmware.
+2. Cuando el circuito esté listo, conectar el USB de datos y ejecutar la carga indicada arriba, o PlatformIO: Upload. Esa operación la realiza el usuario; no se ha ejecutado durante el desarrollo de esta iteración.
+3. Abrir PlatformIO: Serial Monitor a 115200 baudios y pulsar EN/RESET. Deben mostrarse el mensaje de inicio y, aproximadamente cada 500 ms, `Sensor: distancia=... cm` o `Sensor: medicion invalida (sin eco/timeout o fuera de 2-400 cm).` Estas son salidas esperadas, no lecturas obtenidas durante el desarrollo.
+4. Usar un objeto plano frente al sensor y una cinta métrica para comparar, por ejemplo, 10, 30 y 100 cm desde la cara de los transductores. Registrar lectura, referencia y error; todavía no se declara exactitud física ni se aplica calibración.
+5. Retirar o desviar el objeto para buscar ausencia de eco y verificar la respuesta inválida cuando no se complete un pulso a tiempo. Otros objetos pueden seguir reflejando el sonido: retirar un objetivo no garantiza por sí solo un timeout. Una lectura fuera del rango aceptado también se informa como inválida.
+6. Mientras aparecen lecturas, enviar los once comandos de la tabla siguiente y comprobar su respuesta. Repetir `todos:on`, `solo:rojo`, `solo:amarillo`, `solo:verde` y `todos:off`; mover el objeto sin enviar comandos y verificar que los LEDs no cambien por la distancia.
+7. Observar la cadencia aproximada de dos intentos de medición por segundo y la continuidad de los comandos, también cuando se informa invalidez. Registrar reinicios, bloqueos, errores y latencia perceptible. La publicación MQTT y los demás requisitos de red todavía no se evalúan.
 
 ## Prueba manual por Serial
 
 1. Abrir el monitor a 115200 baudios. Para ver el mensaje inicial, pulsar EN/RESET con el monitor abierto. Los tres LEDs deben quedar apagados después de inicializarse.
 2. Escribir cada comando exacto y pulsar Enter. En otros monitores seleccionar LF, CR o CRLF como fin de línea. No incluir comillas ni espacios adicionales.
-3. Enviar las once órdenes de esta tabla en orden. Repetir cada una dos veces: el resultado esperado debe mantenerse. La tabla describe resultados esperados; no registra una ejecución física de la versión nueva.
+3. Enviar las once órdenes de esta tabla en orden y repetir cada una dos veces. El equipo ya probó físicamente el comportamiento anterior; esta secuencia permite comprobar la regresión del código refactorizado.
 
 | Comando | Rojo esperado | Amarillo esperado | Verde esperado |
 |---|---|---|---|
@@ -73,16 +143,17 @@ Por cada línea se muestra el comando recibido, `OK` o el motivo de rechazo y el
 
 Para comprobar los efectos de grupo, enviar `rojo:on`, `amarillo:on` y `verde:on`: los tres deben encenderse. Desde ese estado probar `solo:rojo`, después `solo:amarillo` y `solo:verde`. Volver a encender los tres y enviar `todos:off`.
 
-Para validar específicamente el nuevo comando, enviar `todos:off`, `todos:on`, `todos:on` y `todos:off`, una línea por orden. Las dos ejecuciones consecutivas de `todos:on` deben mostrar `Estado: rojo=on amarillo=on verde=on`, sin apagar ni invertir ningún LED. La última orden debe devolver los tres a off.
+Para comprobar el encendido general durante las mediciones, enviar `todos:off`, `todos:on`, `todos:on` y `todos:off`, una línea por orden. Las dos ejecuciones consecutivas de `todos:on` deben mostrar `Estado: rojo=on amarillo=on verde=on`, sin apagar ni invertir ningún LED. La última orden debe devolver los tres a off.
 
 Probar `rojo:toggle`, `Rojo:on`, un comando con espacios y una línea de 32 o más bytes ASCII: deben rechazarse sin cambiar los estados. El receptor guarda como máximo 31 bytes y descarta toda línea con exceso de longitud o bytes de control, sin ejecutar su prefijo. En esos errores se imprime solo el fragmento guardado y se informa el descarte. La siguiente línea válida debe procesarse normalmente.
 
 ## Límites de esta etapa
 
-- El control local anterior y `todos:off` cuentan con confirmación física del equipo. La compilación de la mejora no sustituye la prueba física pendiente de `todos:on`.
+- El equipo confirmó las pruebas físicas de LEDs, sensor y convivencia tras la refactorización. La regresión conjunta con WiFi sigue pendiente; no se inventan valores de exactitud ni latencia.
 - Los estados mostrados son estados lógicos del programa. No detectan un LED invertido, dañado o desconectado.
 - Las escrituras sobre los tres GPIO son consecutivas, no una conmutación eléctrica simultánea y atómica.
-- Los comandos se aplican al recibir un fin de línea; no hay timeout para una línea incompleta. No se utiliza `delay()` ni lectura serie con espera de línea.
+- Los comandos se aplican al recibir un fin de línea; no hay timeout para una línea incompleta. No se utiliza delay() ni lectura serie con espera de línea. Solo se usan delayMicroseconds(2) y delayMicroseconds(10) para TRIG, además de pulseIn() con timeout explícito de 30 ms.
+- Una medición válida solo significa pulso recibido dentro del timeout y distancia calculada dentro del rango nominal; no garantiza un eco del objeto deseado ni la exactitud de la medida. Se usa velocidad del sonido fija, sin filtrado ni compensación térmica.
 - No se admiten caracteres de control dentro del comando, incluidos retroceso y tabulación. El filtro `send_on_enter` agrupa la entrada hasta Enter, pero no elimina los bytes de retroceso: si se comete un error, enviar esa línea para descartarla y volver a escribir el comando completo.
 - La consola está pensada para pruebas manuales. Un flujo continuo de mensajes puede saturar la salida serie; se revisará la interfaz temporal antes de integrar MQTT.
 - No se han verificado todavía los atributos de estabilidad, medición, respuesta móvil, publicación o reconexión exigidos para la integración final.

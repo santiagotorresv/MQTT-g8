@@ -1,8 +1,8 @@
 # Contrato MQTT de la práctica SIS-234
 
-Fecha: 24 de octubre de 2026. Versión documental: 4.
+Fecha: 27 de octubre de 2026. Versión documental: 7.
 
-Este documento formaliza el contrato acordado a partir de la [consigna oficial](Práctica_MQTT.md). Describe el comportamiento de la futura integración MQTT; no acredita que la aplicación móvil, EMQX o MCP ya funcionen. La implementación actual se limita al control local de los tres LEDs mediante Serial. El equipo confirmó mediante pruebas físicas el control de los tres LEDs y `todos:off`; la prueba física del nuevo `todos:on` permanece pendiente. La verificación de la plantilla original se conserva en la sección 9.
+Este documento formaliza el contrato acordado a partir de la [consigna oficial](Práctica_MQTT.md). Describe el comportamiento de la futura integración MQTT; no acredita que la aplicación móvil, EMQX o MCP ya funcionen. La implementación actual integra ControlLeds, SensorUltrasonico y ConexionWifi. El equipo confirmó físicamente los once comandos, el sensor y su convivencia después de la refactorización. La nueva conexión/reconexión WiFi está pendiente de prueba física; no se conecta a EMQX ni publica MQTT. Los módulos ya probados se conservan sin cambios. La verificación de la plantilla original se conserva en la sección 9 y la compilación actual en el README.
 
 ## 1. Alcance y decisiones aprobadas
 
@@ -22,7 +22,7 @@ Se adopta MQTT 3.1.1 como base de interoperabilidad. Cada cliente utilizará un 
 
 El host será el dominio exacto del despliegue EMQX, con SNI y puerto MQTT/TLS 8883. Se utilizará una CA de confianza correspondiente al despliegue, con reloj válido en el ESP32. No se aceptará desactivar la verificación TLS ni sustituir el dominio por una IP fija. Estas condiciones están documentadas en la [guía de EMQX Serverless](https://docs.emqx.com/en/cloud/latest/deployments/port_guide_serverless.html).
 
-Las credenciales se suministrarán mediante configuración local excluida del repositorio y una plantilla sin valores reales, según la consigna. Su creación y las exclusiones necesarias se realizarán en una etapa posterior, antes de incorporar secretos. Este documento no contiene credenciales.
+Las credenciales se suministrarán mediante configuración local excluida del repositorio y una plantilla sin valores reales, según la consigna. Para WiFi se proporciona include/ConfiguracionWifi.ejemplo.h y se excluye include/ConfiguracionWifi.h mediante .gitignore. La copia local se crea y completa manualmente; sin ella se compila con la plantilla vacía y el control local permanece operativo. Este documento no contiene credenciales.
 
 Permisos previstos: el ESP32 publica telemetría, estados y disponibilidad, y se suscribe a comandos; móvil y Python publican comandos y se suscriben a la información del ESP32. La configuración efectiva de autorización debe verificarse en EMQX. El límite de gasto deberá mantenerse en 0 para usar exclusivamente la cuota gratuita.
 
@@ -70,7 +70,7 @@ Todos los comandos se publican en `sis234/equipo08/esp32-01/cmd`. `Conservar` si
 
 Los once comandos son oficiales; `todos:on` amplía la lista sin alterar los diez anteriores. Cada comando es idempotente: repetirlo consecutivamente deja el mismo resultado. Se rechazarán sin modificar salidas los mensajes vacíos, desconocidos, truncados o con cualquier diferencia respecto a estos once valores. No se deducirán comandos a partir de texto libre en el ESP32.
 
-`todos:on` enciende el grupo completo mediante `LedBank::allOn()`, simétrico a `allOff()`. Las escrituras de GPIO son consecutivas; la orden agrupa el cambio lógico y no promete una conmutación eléctrica atómica de los tres pines.
+`todos:on` enciende el grupo completo mediante `ControlLeds::encenderTodos()`, simétrico a `apagarTodos()`. Las escrituras de GPIO son consecutivas; la orden agrupa el cambio lógico y no promete una conmutación eléctrica atómica de los tres pines.
 
 El ESP32 procesará las órdenes en el orden en que las reciba. Ante órdenes diferentes de móvil y Python no existe un orden global entre publicadores: prevalece el efecto de la última orden procesada sobre cada salida. La idempotencia no elimina conflictos entre comandos distintos ni demuestra causalidad.
 
@@ -79,6 +79,8 @@ Después de aplicar cualquier comando válido, incluido uno repetido, el ESP32 p
 Un estado publicado describe la salida GPIO aplicada por el firmware. No hay sensor de realimentación que confirme emisión de luz, integridad del LED o cableado. La comprobación física se hará durante las pruebas de montaje.
 
 ## 6. Medición, publicación y frescura
+
+En la iteración local actual, SensorUltrasonico usa TRIG=GPIO5 y ECHO=GPIO18, pulso de 10 µs y timeout explícito de 30 000 µs. main programa un intento de medición cada 500 ms con millis(). El cálculo es duración en µs × 0,034 / 2, con rango nominal de aceptación de 2–400 cm. Un timeout o resultado fuera de rango devuelve valida=false y distanciaCm=NaN internamente; Serial informa invalidez sin imprimir una distancia. Esta representación interna no cambia el contrato MQTT: NaN nunca se publicará como payload. No se implementan todavía publicaciones. Detalles y prueba física en [README](../README.md).
 
 Con una medición válida se publicará la distancia en centímetros y el estado `valid`. La representación utilizará punto decimal y una cifra decimal; esto es resolución de presentación, no una promesa de exactitud. Solo se aceptarán valores finitos, no negativos y dentro del rango de trabajo que se declare para el sensor real. No se usarán unidades dentro del payload, coma decimal, NaN, infinito ni valores centinela.
 
@@ -100,9 +102,9 @@ Antes de conectar, el ESP32 configurará Last Will `offline`, QoS 1 y retained, 
 
 `online` expresa conexión MQTT anunciada; no acredita medición válida ni disponibilidad instantánea. Su último valor retenido puede quedar temporalmente desactualizado. Los clientes combinarán disponibilidad, conexión propia y frescura de telemetría. Los estados retenidos de LEDs se mostrarán como últimos estados conocidos cuando no exista conexión actual comprobable.
 
-La pérdida de WiFi o MQTT no cambiará automáticamente los LEDs. El arranque aprobado tras encendido o reinicio es con los tres apagados. El montaje definitivo utiliza GPIO27 para rojo, GPIO26 para amarillo y GPIO25 para verde, activos en HIGH, con resistencia individual de 220 Ω y cátodos a GND. El equipo confirmó el funcionamiento físico del control local y `todos:off`; falta probar físicamente `todos:on`. Al reconectar sin reinicio se publicarán los estados locales existentes.
+La pérdida de WiFi o MQTT no cambiará automáticamente los LEDs. El arranque aprobado tras encendido o reinicio es con los tres apagados. El montaje definitivo utiliza GPIO27 para rojo, GPIO26 para amarillo y GPIO25 para verde, activos en HIGH, con resistencia individual de 220 Ω y cátodos a GND. El equipo confirmó el funcionamiento físico de los once comandos locales de ControlLeds; la convivencia con el sensor también fue confirmada antes de esta refactorización. Al reconectar sin reinicio se publicarán los estados locales existentes.
 
-El HC-SR04 tiene asignados TRIG en GPIO5 y ECHO en GPIO18 mediante divisor resistivo. El circuito anterior utilizó tres resistencias de 2,2 kΩ para ese divisor; se documenta como circuito anterior sujeto a verificación eléctrica. Antes de conectarlo se debe confirmar la disposición real de las resistencias, el punto de toma a GPIO18, masa común y tensión resultante; no se presupone una relación de división correcta solo a partir de sus valores. La lectura del sensor y la configuración de sus GPIO aún no se implementan. GPIO5 es un pin de strapping, cuya condición durante reset se revisará antes de integrar el sensor; véase [Espressif](https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/peripherals/gpio.html).
+El HC-SR04 se alimenta a 5 V, con TRIG en GPIO5 y ECHO en GPIO18 mediante el divisor resistivo anterior de tres resistencias de 2,2 kΩ y GND común. Se conserva exactamente el circuito previo; continúa pendiente su verificación eléctrica. Antes de probarlo se debe confirmar la disposición real de las resistencias, el punto de toma a GPIO18 y la tensión resultante; no se presupone una relación de división correcta solo a partir de sus valores. La lectura y configuración de estos GPIO ya están implementadas en SensorUltrasonico, con funcionamiento físico previo confirmado por el equipo; queda pendiente repetir la prueba tras el cambio de nombres. GPIO5 es un pin de strapping, cuya condición durante reset se verificará en el montaje; véase [Espressif](https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/peripherals/gpio.html).
 
 ## 8. Herramientas MCP previstas y cobertura funcional
 
@@ -154,11 +156,11 @@ La plataforma continúa sin versión fijada en platformio.ini. No impide esta co
 
 Antes del montaje se necesita:
 
-1. El sensor está identificado como HC-SR04. Quedan pendientes fabricante/revisión y ficha técnica, tensión de alimentación, niveles TRIG/ECHO, rango, intervalo mínimo y timeout admisible. Verificar eléctricamente el divisor anterior de tres resistencias de 2,2 kΩ antes de conectar ECHO al ESP32.
-2. Identificación de la placa física y del módulo montado, pinout de sus cabeceras y comprobación de que los GPIO25/26/27 aprobados para los LEDs están disponibles. La asignación definitiva del sensor es TRIG=GPIO5 y ECHO=GPIO18 con divisor; está reservada y documentada, sin implementación.
-3. Verificación física del montaje aprobado: rojo en GPIO27, amarillo en GPIO26 y verde en GPIO25; una resistencia de 220 Ω por LED, cátodos a GND y encendido con HIGH. Comprobar polaridad, valores de resistencia y tensión directa de los LEDs reales.
+1. El sensor es HC-SR04 alimentado a 5 V. La implementación usa la ficha de referencia enlazada en README: pulso de 10 µs, aceptación nominal de 2–400 cm y periodo de 500 ms, con timeout elegido de 30 ms. Quedan pendientes comprobar fabricante/revisión del módulo real, mediciones, rango efectivo y error. Verificar eléctricamente el divisor anterior de tres resistencias de 2,2 kΩ.
+2. La asignación definitiva es TRIG=GPIO5 y ECHO=GPIO18 con divisor, ya configurada por SensorUltrasonico. Comprobar físicamente el montaje y la condición de GPIO5 durante reset.
+3. Los LEDs conservan rojo en GPIO27, amarillo en GPIO26 y verde en GPIO25; resistencia de 220 Ω individual, cátodos a GND y encendido con HIGH. El equipo ya verificó físicamente los once comandos; repetirlos como regresión junto con las lecturas del sensor.
 4. Fuente de alimentación, cable USB de datos, protoboard y conexiones de masa común. Confirmar qué alimentación admite la placa y qué alimentación requiere el sensor.
-5. Revisión del esquema con las conexiones aprobadas y prueba visual de cada LED. El arranque apagado ya está aprobado e implementado en el control local; no hace falta esperar las credenciales del broker. Véase la guía de prueba en [README](../README.md).
+5. La nueva versión se prueba localmente sin credenciales del broker, siguiendo la guía de [README](../README.md). Esta compilación no acredita mediciones físicas ni respuesta conjunta de la integración.
 
 El identificador del grupo ya está definido: equipo08. Antes de las integraciones de red se necesita WiFi de 2,4 GHz utilizable sin portal cautivo, host/CA del despliegue, autenticación y autorización configuradas localmente, acceso a DNS/NTP y puerto 8883, cuotas verificadas y client IDs únicos. No se deben copiar contraseñas al repositorio ni a este documento.
 
@@ -170,11 +172,11 @@ Las siguientes pruebas están pendientes, no son resultados obtenidos:
 
 - Medir distancias conocidas dentro del rango declarado, incluyendo ausencia de eco y timeout, sin fabricar lecturas.
 - Verificar dos publicaciones de distancia por segundo con sensor válido y red estable; medir tanto emisión como recepción para identificar pérdidas QoS 0.
-- Probar los once comandos, sus repeticiones y entradas inválidas en la futura integración MQTT; comprobar visualmente cada LED y la coherencia de los tres estados. Las pruebas locales previas comunicadas por el equipo no acreditan esa integración ni el nuevo `todos:on`.
+- Probar los once comandos, sus repeticiones y entradas inválidas en la futura integración MQTT; comprobar visualmente cada LED y la coherencia de los tres estados. Las pruebas locales de ControlLeds comunicadas por el equipo no acreditan esa integración.
 - Confirmar ausencia de retained en cmd y de reproducción de órdenes antiguas al reconectar.
 - Visualizar gráficamente la distancia en iOS, controlar los tres LEDs y mostrar pérdida de validez/actualización.
 - Ejecutar consultas y comandos en lenguaje natural desde Claude; informar fallos, datos antiguos y confirmaciones limitadas sin inventar resultados.
 - Cortar WiFi/MQTT y reiniciar el ESP32 para comprobar reconexión automática, resuscripción, Last Will y republicación de estados.
 - Probar rechazo de CA/hostname o credenciales incorrectos manteniendo la verificación TLS.
 
-La sección 3.2 de la consigna exige declarar en README y verificar estabilidad, exactitud, tiempo de respuesta, frecuencia y reconexión. Las referencias oficiales son al menos 10 minutos sin bloqueos, error máximo de ±3 cm dentro del rango declarado y respuesta móvil-broker-ESP32 de hasta 1 s. Son referencias para acordar y medir, no resultados. La frecuencia objetivo de 2 lecturas/s sí está aprobada para este proyecto. Faltan el rango de trabajo y los restantes valores definitivos, incluido un tiempo máximo de reconexión medible; el README actual documenta exclusivamente la etapa local de LEDs.
+La sección 3.2 de la consigna exige declarar en README y verificar estabilidad, exactitud, tiempo de respuesta, frecuencia y reconexión. Las referencias oficiales son al menos 10 minutos sin bloqueos, error máximo de ±3 cm dentro del rango declarado y respuesta móvil-broker-ESP32 de hasta 1 s. Son referencias para acordar y medir, no resultados. La frecuencia objetivo de 2 lecturas/s sí está aprobada para este proyecto. El rango de 2–400 cm es nominal de aceptación por software, no un rango de trabajo validado físicamente. Faltan el rango efectivo y los restantes valores definitivos, incluido un tiempo máximo de reconexión medible; el README documenta la etapa local de LEDs y sensor por Serial.
