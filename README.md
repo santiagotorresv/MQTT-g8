@@ -15,11 +15,11 @@ La [guía de configuración iOS](docs/configuracion_ios.md) documenta la conexi�
 
 Los Switches no tienen `Subscribe Topic`: su estado visual puede quedar desactualizado tras comandos de otros clientes. El ESP32 publica los estados aplicados en `state/rojo`, `state/amarillo` y `state/verde`, bajo el prefijo acordado. La prueba específica mediante datos móviles **no fue realizada**. Estas pruebas funcionales no acreditan valores medidos de latencia, estabilidad o frecuencia de publicación.
 
-## Servidor MCP local · Primera subiteración
+## Servidor MCP local · Consulta MQTT de distancia
 
-Se añade un servidor Python con el SDK oficial MCP 2.3.0 y transporte `stdio`. Expone únicamente `verificar_conexion()`, que devuelve `Servidor MCP del equipo 08 disponible`. La [guía del servidor MCP](mcp_server/README.md) explica el entorno virtual, las pruebas automatizadas y la configuración de ejemplo para Claude Desktop en Windows.
+El equipo confirmó la ejecución de `verificar_conexion()` desde Claude Desktop Free. Se conservan Python 3.12.6, SDK MCP 2.3.0 y transporte `stdio`; se añade paho-mqtt 2.1.0 y la herramienta `leer_distancia()`, con una conexión MQTT compartida y antigüedad máxima inicial de 5 segundos. La [guía de integración MCP/MQTT](docs/integracion_mcp_mqtt.md) explica configuración privada, estados de la consulta y pruebas. La [guía del servidor MCP](mcp_server/README.md) conserva las rutas de lanzamiento de Claude.
 
-El descubrimiento y la ejecución en Claude Desktop Free quedan pendientes de comprobación manual. RF6 completo sigue pendiente; esta subiteración no conecta Python a MQTT ni controla el ESP32.
+Las 20 pruebas automatizadas de esta subiteración pasaron. La prueba real con EMQX y la consulta de una distancia real desde Claude quedan pendientes de completar la configuración privada de Python y realizar la validación manual. RF6 completo sigue pendiente; todavía no hay control de LEDs desde Python.
 
 ## Montaje previsto
 
