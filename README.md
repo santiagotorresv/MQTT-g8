@@ -72,16 +72,17 @@ El [protocolo completo](docs/protocolo_mqtt.md) describe sus efectos y las garan
 
 ## Requisitos no funcionales declarados
 
+Los objetivos siguen el apartado 3.2 de la [consigna](docs/Práctica_MQTT.md). Los resultados numéricos de la última columna son **ejemplos ilustrativos, no mediciones realizadas**; deben sustituirse por los registros del prototipo y verificarse durante la Demo.
 
-| Atributo | Objetivo |
-|---|---|
-| Estabilidad | ≥10 minutos continuos sin reinicios ni bloqueos. |
-| Exactitud | Error máximo de ±3 cm respecto a una referencia física; rango nominal declarado: 2–400 cm. |
-| Respuesta | ≤1 s desde la aplicación móvil hasta la actuación del ESP32, pasando por el broker. |
-| Publicación | ≥2 lecturas válidas publicadas/s con sensor válido y conectividad estable; programación cada 500 ms. |
-| Reconexión | Restablecer WiFi y MQTT automáticamente, sin intervención manual. |
-| Seguridad | TLS verificado y credenciales locales excluidas de Git. |
-| Código | POO, responsabilidades separadas y documentación en español. |
+| Atributo | Objetivo declarado | Prueba propuesta y resultado ilustrativo |
+|---|---|---|
+| Estabilidad | ≥10 minutos continuos sin reinicios ni bloqueos. | Mantener la publicación de distancias y alternar comandos sobre los LEDs, observando el monitor Serial y la aplicación. Ejemplo: **20 minutos** de operación continua, **0 reinicios y 0 bloqueos**. |
+| Exactitud de medición | Error absoluto máximo ≤3 cm respecto a una cinta métrica; rango nominal declarado: 2–400 cm. | Tomar 10 lecturas por posición a 2, 10, 50, 100, 200, 300 y 400 cm, con un objeto fijo frente al sensor. Calcular el error absoluto de cada lectura respecto a la referencia. Ejemplo: **error absoluto medio de 0,6 cm y máximo de 1,2 cm** en los puntos evaluados; el máximo es el criterio de aceptación. |
+| Tiempo de respuesta | ≤1 s desde la aplicación móvil hasta la actuación física del LED en el ESP32, pasando por el broker. | Enviar 20 comandos desde IoT MQTT Panel y medir mediante video el tiempo desde el envío hasta el cambio visible del LED. Ejemplo: **0,4 s de media y 0,8 s de máximo** de extremo a extremo; el PUBACK por sí solo no comprueba la actuación. |
+| Frecuencia de publicación | ≥2 lecturas válidas publicadas/s con sensor válido y conectividad estable; programación cada 500 ms. | Contar los mensajes de `telemetry/distance_cm` recibidos mediante una suscripción al broker durante 60 s y revisar cada ventana de 1 s, sin contar `sensor_status`. Ejemplo: **120 lecturas en 60 s**, con un **mínimo de 2 lecturas/s**. |
+| Reconexión | Restablecer WiFi y MQTT automáticamente, sin intervención manual, en ≤60 s desde que la red y el broker vuelvan a estar disponibles. | Interrumpir por separado el WiFi y el acceso al broker, restaurarlos y repetir cada caso 3 veces. Comprobar que se reanuden la telemetría y el control de LEDs sin reiniciar el ESP32. Ejemplo: **3/3 recuperaciones por caso**, con un **máximo de 38 s**. |
+| Seguridad y credenciales | TLS con validación de certificado y nombre del servidor; credenciales WiFi/MQTT en archivos locales excluidos mediante `.gitignore`, con plantillas públicas sin valores reales. | Revisar la configuración TLS, las exclusiones de Git y los archivos versionados. Comprobar que las copias privadas no estén versionadas y que las plantillas permitan configurar el sistema sin publicar credenciales. |
+| Calidad del código | Código legible, modular, orientado a objetos, documentado en español y conforme a las convenciones de C++ y Python. | Revisar la separación de responsabilidades de `SensorUltrasonico`, `ControlLeds`, `ConexionWifi` y `ConexionMqtt`, así como del servidor MCP; comprobar nombres claros, comentarios y documentación de configuración y uso. |
 
 ## Configuración y ejecución
 
