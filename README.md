@@ -72,7 +72,6 @@ El [protocolo completo](docs/protocolo_mqtt.md) describe sus efectos y las garan
 
 ## Requisitos no funcionales declarados
 
-Estos valores son **objetivos del proyecto, no resultados de mediciones cuantitativas**.
 
 | Atributo | Objetivo |
 |---|---|
