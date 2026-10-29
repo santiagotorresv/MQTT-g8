@@ -17,7 +17,11 @@ void ControlLeds::iniciar() {
 }
 
 void ControlLeds::establecerRojo(bool encendido) {
-    digitalWrite(pinRojo_, encendido ? HIGH : LOW);
+    if (encendido) {
+        digitalWrite(pinRojo_, HIGH);
+    } else {
+        digitalWrite(pinRojo_, LOW);
+    }
     rojoEncendido_ = encendido;
 }
 
@@ -26,7 +30,11 @@ bool ControlLeds::estaRojoEncendido() const {
 }
 
 void ControlLeds::establecerAmarillo(bool encendido) {
-    digitalWrite(pinAmarillo_, encendido ? HIGH : LOW);
+    if (encendido) {
+        digitalWrite(pinAmarillo_, HIGH);
+    } else {
+        digitalWrite(pinAmarillo_, LOW);
+    }
     amarilloEncendido_ = encendido;
 }
 
@@ -35,7 +43,11 @@ bool ControlLeds::estaAmarilloEncendido() const {
 }
 
 void ControlLeds::establecerVerde(bool encendido) {
-    digitalWrite(pinVerde_, encendido ? HIGH : LOW);
+    if (encendido) {
+        digitalWrite(pinVerde_, HIGH);
+    } else {
+        digitalWrite(pinVerde_, LOW);
+    }
     verdeEncendido_ = encendido;
 }
 

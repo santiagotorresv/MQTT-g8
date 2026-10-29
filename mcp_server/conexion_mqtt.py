@@ -256,13 +256,22 @@ class ConexionMqtt:
             raise ValueError("solo debe ser un booleano.")
         if solo and (color == "todos" or accion != "encender"):
             raise ValueError("solo únicamente permite encender un LED individual.")
-        valor = "on" if accion == "encender" else "off"
+        valor = "off"
+        if accion == "encender":
+            valor = "on"
+        esperados = {}
         if solo:
-            esperados = {led: "on" if led == color else "off" for led in topicos_leds.values()}
+            for led in topicos_leds.values():
+                if led == color:
+                    esperados[led] = "on"
+                else:
+                    esperados[led] = "off"
             return "solo:" + color, esperados
-        esperados = (
-            {led: valor for led in topicos_leds.values()} if color == "todos" else {color: valor}
-        )
+        if color == "todos":
+            for led in topicos_leds.values():
+                esperados[led] = valor
+        else:
+            esperados[color] = valor
         return color + ":" + valor, esperados
 
     def consultar_leds(self) -> dict:
@@ -281,10 +290,13 @@ class ConexionMqtt:
                     and dato["sesion"] == self._sesion and not dato["retenido"]
                     and edad <= self._antiguedad_maxima
                 )
+                referencia = "ultimo_estado_conocido"
+                if reciente:
+                    referencia = "informe_reciente"
                 estados[color] = {
                     "estado": dato["estado"], "antiguedad_segundos": round(edad, 3),
                     "retenido": dato["retenido"],
-                    "referencia": "informe_reciente" if reciente else "ultimo_estado_conocido",
+                    "referencia": referencia,
                 }
             return {
                 "conexion_mqtt": conexion_lista,
@@ -333,12 +345,18 @@ class ConexionMqtt:
                             or not self._suscrita or not self._suscrita_leds
                             or self._disponibilidad != "online"):
                         break
-                    coinciden = all(
-                        (dato := self._estados_leds[color]) is not None
-                        and dato["estado"] == valor and not dato["retenido"]
-                        and dato["numero"] > numero_inicial and dato["instante"] <= limite
-                        for color, valor in esperados.items()
-                    )
+                    coinciden = True
+                    for color, valor_esperado in esperados.items():
+                        dato = self._estados_leds[color]
+                        if dato is None:
+                            coinciden = False
+                            break
+                        if dato["estado"] != valor_esperado or dato["retenido"]:
+                            coinciden = False
+                            break
+                        if dato["numero"] <= numero_inicial or dato["instante"] > limite:
+                            coinciden = False
+                            break
                     restante = limite - monotonic()
                     if coinciden or restante <= 0:
                         break
@@ -355,9 +373,12 @@ class ConexionMqtt:
             else:
                 estado = "envio_sin_confirmar"
                 mensaje = "No se recibió confirmación del broker dentro del plazo; el resultado del envío es incierto."
+            confirmacion_broker = "no_recibida"
+            if recibido_por_broker:
+                confirmacion_broker = "recibida"
             return {
                 "estado": estado, "comando": comando,
-                "confirmacion_broker": "recibida" if recibido_por_broker else "no_recibida",
+                "confirmacion_broker": confirmacion_broker,
                 "estados_coincidentes": coinciden, "estados_esperados": esperados,
                 "mensaje": mensaje,
             }

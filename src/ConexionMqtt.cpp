@@ -97,9 +97,27 @@ bool ConexionMqtt::publicarMensaje(const char* tema, const char* mensaje, bool r
 bool ConexionMqtt::publicarEstados() {
     // Un comando recibido durante un PUBACK vuelve a activar la marca.
     estadosPendientes_ = false;
-    return publicarMensaje(TemaRojo, leds_.estaRojoEncendido() ? "on" : "off", true, 1) &&
-           publicarMensaje(TemaAmarillo, leds_.estaAmarilloEncendido() ? "on" : "off", true, 1) &&
-           publicarMensaje(TemaVerde, leds_.estaVerdeEncendido() ? "on" : "off", true, 1);
+    const char* estadoRojo = "off";
+    if (leds_.estaRojoEncendido()) {
+        estadoRojo = "on";
+    }
+    if (!publicarMensaje(TemaRojo, estadoRojo, true, 1)) {
+        return false;
+    }
+
+    const char* estadoAmarillo = "off";
+    if (leds_.estaAmarilloEncendido()) {
+        estadoAmarillo = "on";
+    }
+    if (!publicarMensaje(TemaAmarillo, estadoAmarillo, true, 1)) {
+        return false;
+    }
+
+    const char* estadoVerde = "off";
+    if (leds_.estaVerdeEncendido()) {
+        estadoVerde = "on";
+    }
+    return publicarMensaje(TemaVerde, estadoVerde, true, 1);
 }
 
 void ConexionMqtt::intentarConectar() {
@@ -208,7 +226,11 @@ void ConexionMqtt::publicarMedicion(const SensorUltrasonico::Medicion& medicion)
     }
 
     const bool valida = medicion.valida && isfinite(medicion.distanciaCm);
-    if (!publicarMensaje(TemaSensor, valida ? "valid" : "invalid", false, 0) || !valida) {
+    const char* estadoSensor = "invalid";
+    if (valida) {
+        estadoSensor = "valid";
+    }
+    if (!publicarMensaje(TemaSensor, estadoSensor, false, 0) || !valida) {
         return;
     }
     char distancia[16];

@@ -27,6 +27,8 @@ class PruebasServidor(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(listado.tools[1].input_schema.get("properties", {}), {})
         self.assertEqual(listado.tools[3].input_schema.get("properties", {}), {})
         parametros = listado.tools[2].input_schema["properties"]
+        self.assertFalse(listado.tools[2].input_schema["additionalProperties"])
+        self.assertEqual(set(listado.tools[2].input_schema["required"]), {"color", "accion"})
         self.assertEqual(set(parametros), {"color", "accion", "solo"})
         self.assertEqual(parametros["color"]["enum"], ["rojo", "amarillo", "verde", "todos"])
         self.assertEqual(parametros["accion"]["enum"], ["encender", "apagar"])
@@ -93,6 +95,12 @@ class PruebasServidor(unittest.IsolatedAsyncioTestCase):
                     self.assertFalse(orden.is_error)
                     self.assertEqual(json.loads(orden.content[0].text)["estado"], "no_enviado")
 
+                    orden_invalida = await cliente.call_tool(
+                        "controlar_led",
+                        {"color": "rojo", "accion": "encender", "exclusivo": True},
+                    )
+                    self.assertTrue(orden_invalida.is_error)
+
     async def test_control_y_consulta_mcp_simulados(self) -> None:
         prueba = pruebas_leds.PruebasControlLeds()
         prueba.setUp()
@@ -139,6 +147,23 @@ class PruebasServidor(unittest.IsolatedAsyncioTestCase):
                         self.assertFalse(resultado.is_error)
                         self.assertEqual(json.loads(resultado.content[0].text)["estado"], "rechazado")
                         prueba.cliente.publish.assert_not_called()
+
+    async def test_argumentos_desconocidos_no_publican(self) -> None:
+        prueba = pruebas_leds.PruebasControlLeds()
+        prueba.setUp()
+        self.addCleanup(prueba.doCleanups)
+        with patch("servidor.ConexionMqtt.desde_archivo", return_value=prueba.conexion):
+            with patch.object(prueba.conexion, "iniciar"), patch.object(prueba.conexion, "detener"):
+                async with asyncio.timeout(20):
+                    async with Client(servidor, raise_exceptions=True) as cliente:
+                        for nombre_extra in ("exclusivo", "retain", "contexto"):
+                            with self.subTest(nombre_extra=nombre_extra):
+                                resultado = await cliente.call_tool(
+                                    "controlar_led",
+                                    {"color": "rojo", "accion": "encender", nombre_extra: True},
+                                )
+                                self.assertTrue(resultado.is_error)
+                                prueba.cliente.publish.assert_not_called()
 
 
 if __name__ == "__main__":

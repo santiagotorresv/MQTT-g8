@@ -23,16 +23,32 @@ constexpr unsigned long IntervaloMedicionMs = 500UL;
 
 void mostrarEstados() {
     Serial.print(F("Estado: rojo="));
-    Serial.print(leds.estaRojoEncendido() ? "on" : "off");
+    if (leds.estaRojoEncendido()) {
+        Serial.print("on");
+    } else {
+        Serial.print("off");
+    }
     Serial.print(F(" amarillo="));
-    Serial.print(leds.estaAmarilloEncendido() ? "on" : "off");
+    if (leds.estaAmarilloEncendido()) {
+        Serial.print("on");
+    } else {
+        Serial.print("off");
+    }
     Serial.print(F(" verde="));
-    Serial.println(leds.estaVerdeEncendido() ? "on" : "off");
+    if (leds.estaVerdeEncendido()) {
+        Serial.println("on");
+    } else {
+        Serial.println("off");
+    }
 }
 
 void procesarLinea(const char* comando, bool lineaInvalida) {
     Serial.print(F("Comando recibido: "));
-    Serial.println(comando[0] == '\0' ? "<vacio>" : comando);
+    if (comando[0] == '\0') {
+        Serial.println("<vacio>");
+    } else {
+        Serial.println(comando);
+    }
 
     if (lineaInvalida) {
         Serial.println(F("ERROR: linea demasiado larga o con bytes de control; descartada."));

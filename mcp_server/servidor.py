@@ -8,6 +8,7 @@ from typing import Literal
 
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
+from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import StrictBool
 
 from conexion_mqtt import ConexionMqtt
@@ -27,7 +28,26 @@ async def ciclo_de_vida(aplicacion: MCPServer):
         await asyncio.to_thread(conexion.detener)
 
 
-servidor = MCPServer("Equipo 08", lifespan=ciclo_de_vida)
+class ServidorEquipo(MCPServer):
+    """Valida las claves originales antes de que el SDK descarte las adicionales."""
+
+    async def call_tool(self, name, arguments, context=None):
+        # Se conservan los nombres de parámetros de la API oficial sobrescrita.
+        if name == "controlar_led":
+            for parametro in arguments:
+                if parametro not in ("color", "accion", "solo"):
+                    raise ToolError("controlar_led solo admite color, accion y solo.")
+        return await super().call_tool(name, arguments, context)
+
+    async def list_tools(self):
+        herramientas = await super().list_tools()
+        for herramienta in herramientas:
+            if herramienta.name == "controlar_led":
+                herramienta.input_schema["additionalProperties"] = False
+        return herramientas
+
+
+servidor = ServidorEquipo("Equipo 08", lifespan=ciclo_de_vida)
 
 
 @servidor.tool()
