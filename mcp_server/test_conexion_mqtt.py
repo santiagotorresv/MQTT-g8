@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import paho.mqtt.client as mqtt
 
 from conexion_mqtt import (
-    ConexionMqtt, topico_distancia, topico_sensor, topico_disponibilidad,
+    ConexionMqtt, topico_distancia, topico_sensor, topico_disponibilidad, topicos_leds,
 )
 
 
@@ -30,7 +30,7 @@ class PruebasConexionMqtt(unittest.TestCase):
     def conectar(self):
         codigo = SimpleNamespace(is_failure=False)
         self.conexion._al_conectar(self.cliente, None, None, codigo, None)
-        self.conexion._al_suscribir(self.cliente, None, 1, [codigo] * 3, None)
+        self.conexion._al_suscribir(self.cliente, None, 1, [codigo] * 6, None)
 
     def enviar(self, topico, texto, retenido=False):
         mensaje = mqtt.MQTTMessage()
@@ -142,9 +142,22 @@ class PruebasConexionMqtt(unittest.TestCase):
 
     def test_suscripciones_y_sesion(self):
         self.cliente.subscribe.assert_called_with([
-            (topico_distancia, 0), (topico_sensor, 0), (topico_disponibilidad, 1)
+            (topico_distancia, 0), (topico_sensor, 0), (topico_disponibilidad, 1),
+            *((topico, 1) for topico in topicos_leds),
         ])
         self.conexion.consultar_distancia()
+        self.cliente.publish.assert_not_called()
+
+    def test_rechazo_de_leds_conserva_consulta_de_distancia(self):
+        self.lectura_valida()
+        aceptado = SimpleNamespace(is_failure=False)
+        rechazado = SimpleNamespace(is_failure=True)
+        self.conexion._al_suscribir(
+            self.cliente, None, 1, [aceptado] * 3 + [rechazado] * 3, None
+        )
+        self.assertEqual(self.conexion.consultar_distancia()["estado"], "valida")
+        self.assertFalse(self.conexion.consultar_leds()["suscripcion_leds"])
+        self.assertEqual(self.conexion.controlar_led("rojo", "encender")["estado"], "no_enviado")
         self.cliente.publish.assert_not_called()
 
     def test_inicio_tls_y_cierre(self):

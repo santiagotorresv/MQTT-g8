@@ -1,4 +1,4 @@
-"""Suscripción MQTT y última lectura en memoria; sin control de actuadores."""
+"""Conexión compartida, telemetría y control MQTT de los LEDs del equipo 08."""
 
 import json
 import logging
@@ -6,7 +6,7 @@ import math
 from pathlib import Path
 import re
 import ssl
-from threading import Lock
+from threading import Condition, Lock
 from time import monotonic
 
 import paho.mqtt.client as mqtt
@@ -18,6 +18,9 @@ prefijo = "sis234/equipo08/esp32-01/"
 topico_distancia = prefijo + "telemetry/distance_cm"
 topico_sensor = prefijo + "telemetry/sensor_status"
 topico_disponibilidad = prefijo + "availability"
+topico_comandos = prefijo + "cmd"
+topicos_leds = {prefijo + "state/" + color: color for color in ("rojo", "amarillo", "verde")}
+tiempo_limite_comando = 3.0
 
 
 class ConexionMqtt:
@@ -35,8 +38,14 @@ class ConexionMqtt:
         self._contrasena = contrasena
         self._antiguedad_maxima = antiguedad_maxima_segundos
         self._bloqueo = Lock()
+        self._cambio = Condition(self._bloqueo)
+        self._bloqueo_comandos = Lock()
+        self._sesion = 0
+        self._numero_estado = 0
+        self._estados_leds = {color: None for color in topicos_leds.values()}
         self._conectada = False
         self._suscrita = False
+        self._suscrita_leds = False
         self._iniciada = False
         self._motivo = "Conexión MQTT todavía no iniciada."
         self._limpiar_lectura()
@@ -108,11 +117,14 @@ class ConexionMqtt:
         with self._bloqueo:
             self._conectada = False
             self._suscrita = False
+            self._suscrita_leds = False
             self._motivo = "Conexión MQTT detenida."
             self._limpiar_lectura()
+            self._cambio.notify_all()
 
     def _limpiar_lectura(self):
         """Llamar con el bloqueo adquirido, excepto durante la construcción."""
+        self._sesion += 1
         self._distancia = None
         self._instante_distancia = None
         self._estado_sensor = None
@@ -123,13 +135,16 @@ class ConexionMqtt:
         with self._bloqueo:
             self._limpiar_lectura()
             self._suscrita = False
+            self._suscrita_leds = False
             self._conectada = not codigo.is_failure
             self._motivo = "Conexión MQTT rechazada por el broker."
+            self._cambio.notify_all()
         if codigo.is_failure:
             registro.error("EMQX rechazó la conexión MQTT (código %s).", codigo.value)
             return
         resultado, _ = cliente.subscribe([
-            (topico_distancia, 0), (topico_sensor, 0), (topico_disponibilidad, 1)
+            (topico_distancia, 0), (topico_sensor, 0), (topico_disponibilidad, 1),
+            *((topico, 1) for topico in topicos_leds),
         ])
         with self._bloqueo:
             self._motivo = (
@@ -140,15 +155,19 @@ class ConexionMqtt:
         registro.info("Conexión MQTT establecida; suscripciones solicitadas.")
 
     def _al_suscribir(self, cliente, datos, identificador, codigos, propiedades):
-        aceptada = len(codigos) == 3 and all(not codigo.is_failure for codigo in codigos)
+        telemetria_aceptada = len(codigos) == 6 and all(not codigo.is_failure for codigo in codigos[:3])
+        leds_aceptados = len(codigos) == 6 and all(not codigo.is_failure for codigo in codigos[3:])
+        aceptada = telemetria_aceptada and leds_aceptados
         with self._bloqueo:
-            self._suscrita = aceptada
+            self._suscrita = telemetria_aceptada
+            self._suscrita_leds = leds_aceptados
             self._motivo = (
                 "Suscripciones MQTT listas."
                 if aceptada else "El broker rechazó una suscripción MQTT."
             )
+            self._cambio.notify_all()
         if aceptada:
-            registro.info("Las tres suscripciones MQTT están confirmadas.")
+            registro.info("Las seis suscripciones MQTT están confirmadas.")
         else:
             registro.error("El broker rechazó una suscripción MQTT.")
 
@@ -161,18 +180,20 @@ class ConexionMqtt:
         with self._bloqueo:
             self._conectada = False
             self._suscrita = False
+            self._suscrita_leds = False
             self._motivo = "MQTT desconectado; no se puede comprobar el estado del ESP32."
             self._limpiar_lectura()
+            self._cambio.notify_all()
         registro.warning("Conexión MQTT cerrada.")
 
     def _al_mensaje(self, cliente, datos, mensaje):
-        if mensaje.topic not in (topico_distancia, topico_sensor, topico_disponibilidad):
+        if mensaje.topic not in (topico_distancia, topico_sensor, topico_disponibilidad, *topicos_leds):
             return
         try:
             if len(mensaje.payload) > 64:
                 raise ValueError("Mensaje demasiado largo.")
             texto = mensaje.payload.decode("utf-8")
-            if mensaje.topic != topico_disponibilidad and mensaje.retain:
+            if mensaje.topic in (topico_distancia, topico_sensor) and mensaje.retain:
                 raise ValueError("La telemetría no debe estar retenida.")
             if mensaje.topic == topico_distancia:
                 if not re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", texto):
@@ -184,6 +205,8 @@ class ConexionMqtt:
                 raise ValueError("Estado de sensor desconocido.")
             elif mensaje.topic == topico_disponibilidad and texto not in ("online", "offline"):
                 raise ValueError("Disponibilidad desconocida.")
+            elif mensaje.topic in topicos_leds and texto not in ("on", "off"):
+                raise ValueError("Estado de LED desconocido.")
         except (UnicodeError, ValueError):
             with self._bloqueo:
                 # No conservar una lectura anterior como actual tras un mensaje erróneo.
@@ -191,9 +214,12 @@ class ConexionMqtt:
                     self._distancia = self._instante_distancia = None
                 elif mensaje.topic == topico_sensor:
                     self._estado_sensor = self._instante_sensor = None
-                else:
+                elif mensaje.topic == topico_disponibilidad:
                     self._disponibilidad = None
-            registro.warning("Mensaje MQTT rechazado en un tópico de telemetría o disponibilidad.")
+                else:
+                    self._estados_leds[topicos_leds[mensaje.topic]] = None
+                self._cambio.notify_all()
+            registro.warning("Mensaje MQTT rechazado en un tópico suscrito.")
             return
         with self._bloqueo:
             if not self._conectada:
@@ -206,11 +232,137 @@ class ConexionMqtt:
                 self._instante_sensor = monotonic()
                 if texto == "invalid":
                     self._distancia = self._instante_distancia = None
-            else:
+            elif mensaje.topic == topico_disponibilidad:
                 if texto == "offline" or self._disponibilidad == "offline":
+                    self._sesion += 1
                     self._distancia = self._instante_distancia = None
                     self._estado_sensor = self._instante_sensor = None
                 self._disponibilidad = texto
+            else:
+                self._numero_estado += 1
+                self._estados_leds[topicos_leds[mensaje.topic]] = {
+                    "estado": texto, "instante": monotonic(), "retenido": bool(mensaje.retain),
+                    "numero": self._numero_estado, "sesion": self._sesion,
+                }
+            self._cambio.notify_all()
+
+    @staticmethod
+    def _preparar_comando(color, accion, solo):
+        if type(color) is not str or color not in ("rojo", "amarillo", "verde", "todos"):
+            raise ValueError("Color permitido: rojo, amarillo, verde o todos.")
+        if type(accion) is not str or accion not in ("encender", "apagar"):
+            raise ValueError("Acción permitida: encender o apagar.")
+        if type(solo) is not bool:
+            raise ValueError("solo debe ser un booleano.")
+        if solo and (color == "todos" or accion != "encender"):
+            raise ValueError("solo únicamente permite encender un LED individual.")
+        valor = "on" if accion == "encender" else "off"
+        if solo:
+            esperados = {led: "on" if led == color else "off" for led in topicos_leds.values()}
+            return "solo:" + color, esperados
+        esperados = (
+            {led: valor for led in topicos_leds.values()} if color == "todos" else {color: valor}
+        )
+        return color + ":" + valor, esperados
+
+    def consultar_leds(self) -> dict:
+        """Últimos informes MQTT: no equivalen a comprobación física de los LEDs."""
+        with self._bloqueo:
+            conexion_lista = self._conectada and self._suscrita
+            estados = {}
+            ahora = monotonic()
+            for color, dato in self._estados_leds.items():
+                if dato is None:
+                    estados[color] = {"estado": "desconocido", "referencia": "sin_datos"}
+                    continue
+                edad = ahora - dato["instante"]
+                reciente = (
+                    conexion_lista and self._suscrita_leds and self._disponibilidad == "online"
+                    and dato["sesion"] == self._sesion and not dato["retenido"]
+                    and edad <= self._antiguedad_maxima
+                )
+                estados[color] = {
+                    "estado": dato["estado"], "antiguedad_segundos": round(edad, 3),
+                    "retenido": dato["retenido"],
+                    "referencia": "informe_reciente" if reciente else "ultimo_estado_conocido",
+                }
+            return {
+                "conexion_mqtt": conexion_lista,
+                "suscripcion_leds": self._suscrita_leds,
+                "disponibilidad_esp32": self._disponibilidad or "desconocida",
+                "leds": estados,
+                "mensaje": "Estados informados por MQTT; no verifican iluminación física ni una orden concreta.",
+            }
+
+    def controlar_led(self, color, accion, solo=False) -> dict:
+        """Publica una orden idempotente y espera evidencia MQTT durante un plazo acotado."""
+        try:
+            comando, esperados = self._preparar_comando(color, accion, solo)
+        except ValueError as error:
+            return {"estado": "rechazado", "mensaje": str(error)}
+        if not self._bloqueo_comandos.acquire(blocking=False):
+            return {"estado": "ocupado", "mensaje": "Hay otra orden en curso; no se publicó esta orden."}
+        try:
+            limite = monotonic() + tiempo_limite_comando
+            with self._cambio:
+                if not self._conectada or not self._suscrita or not self._suscrita_leds:
+                    return {"estado": "no_enviado", "mensaje": self._motivo}
+                if self._disponibilidad != "online":
+                    return {"estado": "no_enviado", "mensaje": "El ESP32 no tiene disponibilidad online anunciada."}
+                sesion = self._sesion
+                numero_inicial = self._numero_estado
+                # Capturar la referencia y publicar sin permitir actualizaciones intermedias.
+                try:
+                    publicacion = self._cliente.publish(topico_comandos, comando, qos=1, retain=False)
+                except (OSError, ValueError, RuntimeError):
+                    return {"estado": "envio_sin_confirmar", "comando": comando,
+                            "mensaje": "No se pudo confirmar el envío de la orden al broker."}
+            recibido_por_broker = False
+            try:
+                restante = limite - monotonic()
+                if publicacion.rc == mqtt.MQTT_ERR_SUCCESS and restante > 0:
+                    publicacion.wait_for_publish(timeout=restante)
+                    recibido_por_broker = publicacion.is_published()
+            except (ValueError, RuntimeError, OSError):
+                registro.warning("No se pudo confirmar la publicación del comando MQTT.")
+
+            with self._cambio:
+                coinciden = False
+                while recibido_por_broker:
+                    if (self._sesion != sesion or not self._conectada
+                            or not self._suscrita or not self._suscrita_leds
+                            or self._disponibilidad != "online"):
+                        break
+                    coinciden = all(
+                        (dato := self._estados_leds[color]) is not None
+                        and dato["estado"] == valor and not dato["retenido"]
+                        and dato["numero"] > numero_inicial and dato["instante"] <= limite
+                        for color, valor in esperados.items()
+                    )
+                    restante = limite - monotonic()
+                    if coinciden or restante <= 0:
+                        break
+                    self._cambio.wait(timeout=restante)
+            if coinciden:
+                estado = "estado_informado"
+                mensaje = (
+                    "El broker recibió la orden y llegaron estados nuevos coincidentes. "
+                    "Sin identificador de orden no se demuestra causalidad ni encendido físico."
+                )
+            elif recibido_por_broker:
+                estado = "enviado_sin_verificar"
+                mensaje = "Orden enviada al broker; su ejecución no pudo verificarse mediante estados nuevos coincidentes."
+            else:
+                estado = "envio_sin_confirmar"
+                mensaje = "No se recibió confirmación del broker dentro del plazo; el resultado del envío es incierto."
+            return {
+                "estado": estado, "comando": comando,
+                "confirmacion_broker": "recibida" if recibido_por_broker else "no_recibida",
+                "estados_coincidentes": coinciden, "estados_esperados": esperados,
+                "mensaje": mensaje,
+            }
+        finally:
+            self._bloqueo_comandos.release()
 
     def consultar_distancia(self) -> dict:
         """Devuelve una instantánea coherente, sin esperas de red ni valores inventados."""

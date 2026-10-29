@@ -1,6 +1,6 @@
 # SIS-234 · Equipo 8 · MQTT + MCP
 
-Estado actual: la iteración 6 está terminada y probada físicamente por el equipo. El iPhone, mediante IoT MQTT Panel y EMQX Cloud, muestra la distancia en un Gauge y controla los tres LEDs de forma individual y conjunta. RF4 y RF5 están comprobados mediante pruebas funcionales. Se conservan los once comandos, GPIO y mediciones programadas cada 500 ms. MCP continúa pendiente.
+Estado actual: el equipo confirmó ESP32, EMQX, panel iOS y consulta de distancias reales mediante Claude Desktop Free. RF4 y RF5 están comprobados funcionalmente. La iteración 7.3 incorpora control y consulta de LEDs mediante MCP, con pruebas automatizadas aprobadas; su validación física desde Claude continúa pendiente. Se conservan los once comandos, GPIO y mediciones programadas cada 500 ms.
 
 Contrato MQTT: [docs/protocolo_mqtt.md](docs/protocolo_mqtt.md). Prefijo definitivo: `sis234/equipo08/esp32-01/`. El estado de la integración iOS se registra en la guía siguiente; el contrato se conserva sin cambios.
 
@@ -15,11 +15,11 @@ La [guía de configuración iOS](docs/configuracion_ios.md) documenta la conexi�
 
 Los Switches no tienen `Subscribe Topic`: su estado visual puede quedar desactualizado tras comandos de otros clientes. El ESP32 publica los estados aplicados en `state/rojo`, `state/amarillo` y `state/verde`, bajo el prefijo acordado. La prueba específica mediante datos móviles **no fue realizada**. Estas pruebas funcionales no acreditan valores medidos de latencia, estabilidad o frecuencia de publicación.
 
-## Servidor MCP local · Consulta MQTT de distancia
+## Servidor MCP local · Distancia y LEDs
 
-El equipo confirmó la ejecución de `verificar_conexion()` desde Claude Desktop Free. Se conservan Python 3.12.6, SDK MCP 2.3.0 y transporte `stdio`; se añade paho-mqtt 2.1.0 y la herramienta `leer_distancia()`, con una conexión MQTT compartida y antigüedad máxima inicial de 5 segundos. La [guía de integración MCP/MQTT](docs/integracion_mcp_mqtt.md) explica configuración privada, estados de la consulta y pruebas. La [guía del servidor MCP](mcp_server/README.md) conserva las rutas de lanzamiento de Claude.
+Se conservan Python 3.12.6, SDK MCP 2.3.0, paho-mqtt 2.1.0 y transporte `stdio`. Las herramientas `verificar_conexion()`, `leer_distancia()`, `controlar_led(color, accion, solo=false)` y `consultar_leds()` reutilizan una sola conexión MQTT/TLS. La [guía de control de LEDs MCP](docs/control_leds_mcp.md) detalla parámetros, confirmaciones, pruebas y limitaciones. La [guía de integración MCP/MQTT](docs/integracion_mcp_mqtt.md) conserva la preparación de credenciales y la consulta del sensor. La [guía del servidor MCP](mcp_server/README.md) explica el lanzamiento desde Claude.
 
-Las 20 pruebas automatizadas de esta subiteración pasaron. La prueba real con EMQX y la consulta de una distancia real desde Claude quedan pendientes de completar la configuración privada de Python y realizar la validación manual. RF6 completo sigue pendiente; todavía no hay control de LEDs desde Python.
+Las 45 pruebas automatizadas de la iteración 7.3 pasaron, incluyendo los once comandos, entradas inválidas, QoS/Retain, estados históricos, timeouts y ejecución MCP. La consulta real de distancia desde Claude fue confirmada por el equipo. El control físico de LEDs desde Claude y la validación completa de RF6 siguen pendientes. Un PUBACK o estado MQTT no acredita iluminación física ni causalidad de una orden.
 
 ## Montaje previsto
 

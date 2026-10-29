@@ -1,27 +1,30 @@
 # Servidor MCP local · Equipo 08
 
-El equipo confirmó que `verificar_conexion` se ejecutó correctamente desde Claude Desktop Free. La segunda subiteración incorpora la conexión MQTT y `leer_distancia`; su [guía de integración](../docs/integracion_mcp_mqtt.md) documenta la configuración privada y las pruebas actuales. La consulta real de distancia desde Claude y RF6 completo siguen pendientes; todavía no hay control de LEDs desde Python.
+El equipo confirmó `verificar_conexion` y la consulta de distancias reales desde Claude Desktop Free. La iteración 7.3 añade `controlar_led` y `consultar_leds` sobre la conexión existente. La [guía de control de LEDs](../docs/control_leds_mcp.md) explica cómo probarlos; su validación física desde Claude y RF6 completo siguen pendientes. La [guía de integración MQTT](../docs/integracion_mcp_mqtt.md) conserva la preparación de credenciales y del sensor.
 
 ## Entorno y archivos
 
 - Python comprobado: **3.12.6**, de 64 bits. El proyecto requiere Python 3.11 o superior.
 - SDK oficial: **mcp==2.3.0**, fijado en `requirements.txt`; se utiliza `MCPServer`, sin FastMCP.
 - Entorno independiente: `mcp_server/.venv/`, excluido de Git por las reglas existentes.
-- `servidor.py`: instancia `MCPServer`, registra dos herramientas y gestiona una conexión MQTT durante su ciclo de vida.
-- `conexion_mqtt.py`: suscripciones y última lectura recibida, protegida con un bloqueo.
+- `servidor.py`: instancia `MCPServer`, registra cuatro herramientas y gestiona una conexión MQTT durante su ciclo de vida.
+- `conexion_mqtt.py`: telemetría, estados de LEDs, publicación y espera acotada de evidencia MQTT, con datos protegidos por un bloqueo.
+- `test_control_leds.py`: once traducciones, validaciones, consulta y confirmaciones mediante mensajes simulados.
 - `test_servidor.py`: pruebas con `unittest` y el cliente del SDK, sin bibliotecas de pruebas adicionales.
 - `claude_desktop_config.ejemplo.json`: configuración de ejemplo con las rutas absolutas comprobadas en este equipo.
 
 Las dependencias directas son `mcp==2.3.0` y `paho-mqtt==2.1.0`. Pip instala también las dependencias requeridas por el SDK; aunque algunas soportan HTTP, este servidor utiliza exclusivamente `stdio` y no abre un servidor HTTP. No se instalan los extras de CLI.
 
-Se utiliza directamente una instancia de la clase `MCPServer` del SDK y una función registrada; no se añade otra clase propia para devolver una constante.
+Se utiliza una instancia de `MCPServer` y la clase `ConexionMqtt` para separar protocolo MCP de conexión y datos MQTT. La espera de una orden se ejecuta con `asyncio.to_thread`; no bloquea el bucle asíncrono del servidor.
 
-## Herramienta
+## Herramientas
 
-| Nombre | Parámetros | Resultado exacto |
+| Nombre | Parámetros | Resultado |
 |---|---|---|
 | `verificar_conexion` | Ninguno | `Servidor MCP del equipo 08 disponible` |
 | `leer_distancia` | Ninguno | Última distancia MQTT válida y reciente, o una condición explícita de ausencia, invalidez, antigüedad o desconexión. |
+| `controlar_led` | `color`, `accion`, `solo=false` | Publicación QoS 1 sin Retain y evidencia MQTT acotada a 3 segundos; no confirma encendido físico. |
+| `consultar_leds` | Ninguno | Estados conocidos/desconocidos, edad y referencia histórica o reciente. |
 
 `verificar_conexion` comprueba la disponibilidad del servidor local, no WiFi, EMQX ni el estado físico del ESP32. Mantiene su texto exacto. `leer_distancia` consulta la conexión compartida y no crea conexiones nuevas. No se añaden mensajes de depuración en stdout, reservado para el protocolo; los registros se dirigen a stderr.
 
@@ -41,7 +44,7 @@ python -m venv mcp_server/.venv
 
 No es necesario activar el entorno: se invoca su ejecutable directamente. No reutilizar el entorno de PlatformIO. En esta máquina `python` corresponde a Python 3.12.6; el lanzador `py` no detectó instalaciones, por lo que no se utiliza en estas instrucciones.
 
-Las pruebas comprueban las dos herramientas, sin parámetros expuestos al modelo. Se mantiene la validación exacta de `verificar_conexion` y se comprueban los estados de `leer_distancia`. Se usa `Client(servidor)` en memoria y `Client(StdioServerParameters(...))` por `stdio`. Las pruebas MCP tienen un timeout de 20 segundos. La guía de integración registra los 20 casos actuales y distingue mensajes simulados de datos reales.
+Las pruebas comprueban las cuatro herramientas, la validación exacta de `verificar_conexion`, los estados de `leer_distancia` y los parámetros estrictos de actuación. Se usa `Client(servidor)` en memoria y `Client(StdioServerParameters(...))` por `stdio`. Las pruebas MCP tienen un timeout de 20 segundos. La suite actual tiene 45 pruebas aprobadas; los mensajes simulados solo se usan en tests.
 
 Registro de la primera subiteración, **28 de octubre de 2026**: importación de `mcp` y `MCPServer` correcta, `pip check` sin conflictos y 2 pruebas aprobadas, en 2,795 s, con salida 0. Se comprobaron ambas rutas del ejemplo y la exclusión del entorno virtual de Git. La creación y descarga requirieron permisos ampliados por restricciones del sandbox; las pruebas se ejecutaron fuera de él. La segunda subiteración amplía la validación a **20 pruebas aprobadas**, descritas en la guía de integración.
 
@@ -65,12 +68,12 @@ No se utiliza el comando de instalación del SDK, ya que modificaría la configu
 ## Comprobación manual pendiente en Claude Desktop Free
 
 1. Revisar los servidores o conectores MCP locales disponibles y comprobar que aparece `equipo08` sin error de inicio.
-2. Abrir su lista de herramientas y comprobar que contiene `verificar_conexion` y `leer_distancia`, sin parámetros.
+2. Abrir su lista de herramientas y comprobar que contiene `verificar_conexion`, `leer_distancia`, `consultar_leds` y `controlar_led`. Solo la última expone parámetros: color, accion y solo.
 3. En una conversación nueva escribir: **«Ejecuta la herramienta verificar_conexion del servidor equipo08 y muestra su resultado exacto.»**
 4. Autorizar la ejecución si Claude lo solicita y comprobar que aparece una llamada real a la herramienta. Una respuesta escrita por el modelo sin invocación no acredita la integración.
 5. Revisar el resultado de la llamada: debe ser exactamente **`Servidor MCP del equipo 08 disponible`**.
 
-El equipo ya confirmó el descubrimiento y la ejecución de `verificar_conexion`. La ejecución de `leer_distancia` con datos reales sigue pendiente de la prueba manual de la guía de integración. Se conserva Claude Desktop Free y no se añade ningún servicio de pago.
+El equipo ya confirmó `verificar_conexion` y `leer_distancia` con datos reales. Para probar el control físico y la interpretación de frases seguir la guía de LEDs. Se conserva Claude Desktop Free y no se añade ningún servicio de pago.
 
 Si no aparece el servidor, comprobar las dos rutas, la instalación de dependencias en ese entorno, la sintaxis JSON y el reinicio completo de Claude. Revisar los registros en `%APPDATA%\Claude\logs`, especialmente `mcp.log` y el registro correspondiente a `equipo08`. Ejecutar `servidor.py` sin un cliente puede dejarlo esperando mensajes por stdin sin mostrar texto; eso por sí solo no acredita ni descarta su funcionamiento.
 
