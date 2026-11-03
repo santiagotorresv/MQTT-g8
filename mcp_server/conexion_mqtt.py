@@ -3,6 +3,7 @@
 import json
 import logging
 import math
+import os
 from pathlib import Path
 import re
 import ssl
@@ -51,7 +52,8 @@ class ConexionMqtt:
         self._limpiar_lectura()
         self._cliente = mqtt.Client(
             callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
-            client_id="equipo08_mcp_python",
+            # Claude Desktop puede abrir varios procesos; un ID repetido los expulsaría del broker.
+            client_id=f"equipo08_mcp_python_{os.getpid()}",
             protocol=mqtt.MQTTv311,
             clean_session=True,
         )
